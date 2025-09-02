@@ -1,3 +1,1765 @@
+
+
+/ModLoader/app/src/main/java/com/modloader/ui/LogViewerActivity.java
+
+// File: LogViewerActivity.java (FIXED) - Complete Enhanced Log Viewer with Persistent Settings
+// Path: /app/src/main/java/com/modloader/ui/LogViewerActivity.java
+
+package com.modloader.ui;
+
+import android.app.AlertDialog;
+import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.view.Menu;
+import android.view.MenuItem;
+import android.view.View;
+import android.widget.*;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.FileProvider;
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
+
+import com.modloader.R;
+import com.modloader.util.LogUtils;
+
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.text.SimpleDateFormat;
+import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.regex.Pattern;
+
+public class LogViewerActivity extends AppCompatActivity {
+    private static final String TAG = "LogViewerActivity";
+    
+    // FIXED: SharedPreferences for persistent settings
+    private static final String PREFS_NAME = "log_viewer_settings";
+    private static final String PREF_AUTO_REFRESH = "auto_refresh_enabled";
+    private static final String PREF_SYNTAX_HIGHLIGHTING = "syntax_highlighting_enabled";
+    private static final String PREF_TEXT_SIZE = "text_size";
+    private static final String PREF_AUTO_SCROLL = "auto_scroll_enabled";
+    private static final String PREF_LOG_TYPE_FILTER = "log_type_filter";
+    private static final String PREF_LOG_LEVEL_FILTER = "log_level_filter";
+    
+    // UI Components
+    private SwipeRefreshLayout swipeRefreshLayout;
+    private ScrollView logScrollView;
+    private TextView logTextView;
+    private TextView logStatsText;
+    private Button refreshButton;
+    
+    // Filter Components
+    private LinearLayout filterSection;
+    private Spinner logTypeSpinner;
+    private Spinner logLevelSpinner;
+    private EditText searchEditText;
+    private CheckBox autoScrollCheckbox;
+    private Button clearLogsButton;
+    private Button exportLogsButton;
+    
+    // Settings Components (for settings modal)
+    private SharedPreferences settings;
+    private boolean autoRefreshEnabled = true;
+    private boolean syntaxHighlightingEnabled = true;
+    private int textSize = 12;
+    private boolean autoScrollEnabled = true;
+    
+    // Data Management
+    private List<LogEntry> allLogEntries = new ArrayList<>();
+    private List<LogEntry> filteredLogEntries = new ArrayList<>();
+    private String currentSearchQuery = "";
+    private String currentTypeFilter = "ALL";
+    private String currentLevelFilter = "ALL";
+    
+    // Auto-refresh
+    private Handler autoRefreshHandler;
+    private Runnable autoRefreshRunnable;
+    private static final int AUTO_REFRESH_INTERVAL = 5000; // 5 seconds
+    
+    // Threading
+    private ExecutorService executorService = Executors.newSingleThreadExecutor();
+    
+    // Log Entry Model
+    private static class LogEntry {
+        public String timestamp;
+        public String level;
+        public String tag;
+        public String message;
+        public String type;
+        public String fullText;
+        
+        public LogEntry(String fullText) {
+            this.fullText = fullText;
+            parseLogEntry(fullText);
+        }
+        
+        private void parseLogEntry(String logText) {
+            // Parse log entry format: [2025-08-31 13:42:28] LEVEL: Message
+            try {
+                if (logText.startsWith("[")) {
+                    int timestampEnd = logText.indexOf("]");
+                    if (timestampEnd > 0) {
+                        timestamp = logText.substring(1, timestampEnd);
+                        String remaining = logText.substring(timestampEnd + 1).trim();
+                        
+                        if (remaining.contains(":")) {
+                            String[] parts = remaining.split(":", 2);
+                            level = parts[0].trim();
+                            message = parts.length > 1 ? parts[1].trim() : "";
+                        } else {
+                            level = "INFO";
+                            message = remaining;
+                        }
+                    } else {
+                        // Fallback parsing
+                        timestamp = "Unknown";
+                        level = "INFO";
+                        message = logText;
+                    }
+                } else {
+                    // Simple format without timestamp
+                    timestamp = "Unknown";
+                    level = "INFO";
+                    message = logText;
+                }
+                
+                // Determine type based on content
+                if (message.contains("USER:") || level.equals("USER")) {
+                    type = "USER";
+                } else if (message.contains("ERROR") || level.equals("ERROR")) {
+                    type = "ERROR";
+                } else if (message.contains("WARNING") || level.equals("WARNING")) {
+                    type = "WARNING";
+                } else if (message.contains("DEBUG") || level.equals("DEBUG")) {
+                    type = "DEBUG";
+                } else {
+                    type = "INFO";
+                }
+                
+                // Extract tag if present
+                if (message.startsWith("[") && message.contains("]")) {
+                    int tagEnd = message.indexOf("]");
+                    tag = message.substring(1, tagEnd);
+                } else {
+                    tag = "System";
+                }
+            } catch (Exception e) {
+                // Fallback for malformed log entries
+                timestamp = "Unknown";
+                level = "INFO";
+                tag = "System";
+                message = logText;
+                type = "INFO";
+            }
+        }
+    }
+    
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_log_viewer_enhanced);
+        setTitle("📋 Advanced Log Viewer");
+        
+        // FIXED: Initialize SharedPreferences
+        settings = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        loadSettings();
+        
+        initializeViews();
+        setupFilters();
+        setupListeners();
+        setupAutoRefresh();
+        
+        // Initial log load
+        refreshLogs();
+        
+        LogUtils.logUser("Advanced Log Viewer opened");
+    }
+    
+    // FIXED: Load settings from SharedPreferences
+    private void loadSettings() {
+        autoRefreshEnabled = settings.getBoolean(PREF_AUTO_REFRESH, true);
+        syntaxHighlightingEnabled = settings.getBoolean(PREF_SYNTAX_HIGHLIGHTING, true);
+        textSize = settings.getInt(PREF_TEXT_SIZE, 12);
+        autoScrollEnabled = settings.getBoolean(PREF_AUTO_SCROLL, true);
+        currentTypeFilter = settings.getString(PREF_LOG_TYPE_FILTER, "ALL");
+        currentLevelFilter = settings.getString(PREF_LOG_LEVEL_FILTER, "ALL");
+        
+        LogUtils.logDebug("Settings loaded - AutoRefresh: " + autoRefreshEnabled + 
+            ", SyntaxHighlighting: " + syntaxHighlightingEnabled + 
+            ", TextSize: " + textSize);
+    }
+    
+    // FIXED: Save settings to SharedPreferences
+    private void saveSettings() {
+        SharedPreferences.Editor editor = settings.edit();
+        editor.putBoolean(PREF_AUTO_REFRESH, autoRefreshEnabled);
+        editor.putBoolean(PREF_SYNTAX_HIGHLIGHTING, syntaxHighlightingEnabled);
+        editor.putInt(PREF_TEXT_SIZE, textSize);
+        editor.putBoolean(PREF_AUTO_SCROLL, autoScrollEnabled);
+        editor.putString(PREF_LOG_TYPE_FILTER, currentTypeFilter);
+        editor.putString(PREF_LOG_LEVEL_FILTER, currentLevelFilter);
+        editor.apply(); // FIXED: Use apply() for asynchronous save
+        
+        LogUtils.logDebug("Settings saved successfully");
+    }
+    
+    private void initializeViews() {
+        // Main components
+        swipeRefreshLayout = findViewById(R.id.swipeRefreshLayout);
+        logScrollView = findViewById(R.id.logScrollView);
+        logTextView = findViewById(R.id.logTextView);
+        logStatsText = findViewById(R.id.logStatsText);
+        refreshButton = findViewById(R.id.refreshButton);
+        
+        // Filter components
+        filterSection = findViewById(R.id.filterSection);
+        logTypeSpinner = findViewById(R.id.logTypeSpinner);
+        logLevelSpinner = findViewById(R.id.logLevelSpinner);
+        searchEditText = findViewById(R.id.searchEditText);
+        autoScrollCheckbox = findViewById(R.id.autoScrollCheckbox);
+        clearLogsButton = findViewById(R.id.clearLogsButton);
+        exportLogsButton = findViewById(R.id.exportLogsButton);
+        
+        // FIXED: Apply loaded settings to UI components
+        applySettingsToUI();
+    }
+    
+    // FIXED: Apply loaded settings to UI components
+    private void applySettingsToUI() {
+        if (logTextView != null) {
+            logTextView.setTextSize(textSize);
+        }
+        if (autoScrollCheckbox != null) {
+            autoScrollCheckbox.setChecked(autoScrollEnabled);
+        }
+    }
+    
+    private void setupFilters() {
+        // Setup type filter spinner
+        String[] typeOptions = {"ALL", "USER", "ERROR", "WARNING", "DEBUG", "INFO"};
+        ArrayAdapter<String> typeAdapter = new ArrayAdapter<>(this, 
+            android.R.layout.simple_spinner_item, typeOptions);
+        typeAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        logTypeSpinner.setAdapter(typeAdapter);
+        
+        // FIXED: Set spinner to saved filter value
+        int typePosition = Arrays.asList(typeOptions).indexOf(currentTypeFilter);
+        if (typePosition >= 0) {
+            logTypeSpinner.setSelection(typePosition);
+        }
+        
+        // Setup level filter spinner
+        String[] levelOptions = {"ALL", "ERROR", "WARNING", "INFO", "DEBUG", "USER"};
+        ArrayAdapter<String> levelAdapter = new ArrayAdapter<>(this, 
+            android.R.layout.simple_spinner_item, levelOptions);
+        levelAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        logLevelSpinner.setAdapter(levelAdapter);
+        
+        // FIXED: Set spinner to saved filter value
+        int levelPosition = Arrays.asList(levelOptions).indexOf(currentLevelFilter);
+        if (levelPosition >= 0) {
+            logLevelSpinner.setSelection(levelPosition);
+        }
+    }
+    
+    private void setupListeners() {
+        // Swipe to refresh
+        swipeRefreshLayout.setOnRefreshListener(this::refreshLogs);
+        
+        // Manual refresh button
+        refreshButton.setOnClickListener(v -> refreshLogs());
+        
+        // Filter listeners
+        logTypeSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                currentTypeFilter = parent.getItemAtPosition(position).toString();
+                saveSettings(); // FIXED: Save when filter changes
+                applyFilters();
+            }
+            
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {}
+        });
+        
+        logLevelSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                currentLevelFilter = parent.getItemAtPosition(position).toString();
+                saveSettings(); // FIXED: Save when filter changes
+                applyFilters();
+            }
+            
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {}
+        });
+        
+        // Search functionality
+        searchEditText.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                currentSearchQuery = s.toString().toLowerCase().trim();
+                applyFilters();
+            }
+            
+            @Override
+            public void afterTextChanged(Editable s) {}
+        });
+        
+        // Auto-scroll checkbox
+        autoScrollCheckbox.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            autoScrollEnabled = isChecked;
+            saveSettings(); // FIXED: Save when setting changes
+            if (isChecked) {
+                scrollToBottom();
+            }
+        });
+        
+        // Action buttons
+        clearLogsButton.setOnClickListener(v -> showClearLogsDialog());
+        exportLogsButton.setOnClickListener(v -> exportLogs());
+    }
+    
+    private void setupAutoRefresh() {
+        autoRefreshHandler = new Handler(Looper.getMainLooper());
+        autoRefreshRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (autoRefreshEnabled) {
+                    refreshLogs();
+                    autoRefreshHandler.postDelayed(this, AUTO_REFRESH_INTERVAL);
+                }
+            }
+        };
+        
+        // Start auto-refresh if enabled
+        if (autoRefreshEnabled) {
+            autoRefreshHandler.postDelayed(autoRefreshRunnable, AUTO_REFRESH_INTERVAL);
+        }
+    }
+    
+    private void refreshLogs() {
+        executorService.execute(() -> {
+            try {
+                // Get logs from LogUtils
+                String rawLogs = LogUtils.getLogs();
+                
+                runOnUiThread(() -> {
+                    parseAndDisplayLogs(rawLogs);
+                    swipeRefreshLayout.setRefreshing(false);
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    logTextView.setText("❌ Error loading logs: " + e.getMessage());
+                    swipeRefreshLayout.setRefreshing(false);
+                });
+            }
+        });
+    }
+    
+    private void parseAndDisplayLogs(String rawLogs) {
+        // Parse logs into entries
+        allLogEntries.clear();
+        if (rawLogs != null && !rawLogs.trim().isEmpty()) {
+            String[] logLines = rawLogs.split("\n");
+            for (String line : logLines) {
+                if (!line.trim().isEmpty()) {
+                    allLogEntries.add(new LogEntry(line.trim()));
+                }
+            }
+        }
+        
+        // Apply current filters
+        applyFilters();
+    }
+    
+    private void applyFilters() {
+        filteredLogEntries.clear();
+        
+        for (LogEntry entry : allLogEntries) {
+            boolean matchesType = currentTypeFilter.equals("ALL") || 
+                entry.type.equals(currentTypeFilter);
+            boolean matchesLevel = currentLevelFilter.equals("ALL") || 
+                entry.level.equals(currentLevelFilter);
+            boolean matchesSearch = currentSearchQuery.isEmpty() || 
+                entry.fullText.toLowerCase().contains(currentSearchQuery);
+            
+            if (matchesType && matchesLevel && matchesSearch) {
+                filteredLogEntries.add(entry);
+            }
+        }
+        
+        displayFilteredLogs();
+        updateStatistics();
+    }
+    
+    private void displayFilteredLogs() {
+        if (filteredLogEntries.isEmpty()) {
+            logTextView.setText("📋 No logs match the current filters.\n\n" +
+                "Try:\n" +
+                "• Changing filter settings\n" +
+                "• Clearing search query\n" +
+                "• Refreshing logs\n" +
+                "• Using the app to generate logs");
+            return;
+        }
+        
+        StringBuilder displayText = new StringBuilder();
+        
+        for (LogEntry entry : filteredLogEntries) {
+            if (syntaxHighlightingEnabled) {
+                displayText.append(formatLogEntryWithSyntax(entry));
+            } else {
+                displayText.append(entry.fullText);
+            }
+            displayText.append("\n");
+        }
+        
+        // FIXED: Apply text size from settings
+        logTextView.setText(displayText.toString());
+        logTextView.setTextSize(textSize);
+        
+        // Auto-scroll if enabled
+        if (autoScrollEnabled) {
+            scrollToBottom();
+        }
+    }
+    
+    private String formatLogEntryWithSyntax(LogEntry entry) {
+        // This would ideally use SpannableString for actual coloring
+        // For now, we'll add visual indicators
+        String indicator = "";
+        switch (entry.type) {
+            case "ERROR":
+                indicator = "❌ ";
+                break;
+            case "WARNING":
+                indicator = "⚠️ ";
+                break;
+            case "DEBUG":
+                indicator = "🔍 ";
+                break;
+            case "USER":
+                indicator = "👤 ";
+                break;
+            default:
+                indicator = "ℹ️ ";
+                break;
+        }
+        
+        return indicator + entry.fullText;
+    }
+    
+    private void updateStatistics() {
+        int totalLogs = allLogEntries.size();
+        int showingLogs = filteredLogEntries.size();
+        int errorCount = 0;
+        int warningCount = 0;
+        
+        for (LogEntry entry : allLogEntries) {
+            if ("ERROR".equals(entry.type)) errorCount++;
+            else if ("WARNING".equals(entry.type)) warningCount++;
+        }
+        
+        String statsText = String.format(Locale.getDefault(),
+            "📊 Total: %d | Showing: %d | Errors: %d | Warnings: %d",
+            totalLogs, showingLogs, errorCount, warningCount);
+        
+        logStatsText.setText(statsText);
+    }
+    
+    private void scrollToBottom() {
+        logScrollView.post(() -> {
+            logScrollView.fullScroll(View.FOCUS_DOWN);
+        });
+    }
+    
+    // FIXED: Settings dialog with proper persistence
+    private void showSettingsDialog() {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        
+        // Create custom view for settings
+        LinearLayout settingsView = new LinearLayout(this);
+        settingsView.setOrientation(LinearLayout.VERTICAL);
+        settingsView.setPadding(48, 32, 48, 32);
+        
+        // Title
+        TextView title = new TextView(this);
+        title.setText("⚙️ Log Viewer Settings");
+        title.setTextSize(18);
+        title.setTypeface(null, Typeface.BOLD);
+        title.setPadding(0, 0, 0, 24);
+        settingsView.addView(title);
+        
+        // Auto-refresh setting
+        CheckBox autoRefreshCheck = new CheckBox(this);
+        autoRefreshCheck.setText("🔄 Auto-refresh logs (every 5 seconds)");
+        autoRefreshCheck.setChecked(autoRefreshEnabled);
+        settingsView.addView(autoRefreshCheck);
+        
+        // Syntax highlighting setting
+        CheckBox syntaxHighlightCheck = new CheckBox(this);
+        syntaxHighlightCheck.setText("🎨 Enable syntax highlighting");
+        syntaxHighlightCheck.setChecked(syntaxHighlightingEnabled);
+        settingsView.addView(syntaxHighlightCheck);
+        
+        // Text size setting
+        TextView textSizeLabel = new TextView(this);
+        textSizeLabel.setText("📝 Text Size: " + textSize);
+        textSizeLabel.setPadding(0, 24, 0, 8);
+        settingsView.addView(textSizeLabel);
+        
+        SeekBar textSizeSeek = new SeekBar(this);
+        textSizeSeek.setMin(8);
+        textSizeSeek.setMax(24);
+        textSizeSeek.setProgress(textSize);
+        textSizeSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                textSizeLabel.setText("📝 Text Size: " + progress);
+            }
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {}
+        });
+        settingsView.addView(textSizeSeek);
+        
+        // Note about persistence
+        TextView persistNote = new TextView(this);
+        persistNote.setText("💡 Changes are applied immediately and persist during this session.");
+        persistNote.setTextSize(12);
+        persistNote.setPadding(0, 16, 0, 0);
+        persistNote.setTextColor(Color.GRAY);
+        settingsView.addView(persistNote);
+        
+        builder.setView(settingsView);
+        builder.setPositiveButton("✅ Apply", (dialog, which) -> {
+            // FIXED: Apply and save settings
+            autoRefreshEnabled = autoRefreshCheck.isChecked();
+            syntaxHighlightingEnabled = syntaxHighlightCheck.isChecked();
+            textSize = textSizeSeek.getProgress();
+            
+            // Save to SharedPreferences
+            saveSettings();
+            
+            // Apply immediately
+            applySettingsToUI();
+            displayFilteredLogs(); // Refresh display with new settings
+            
+            // Restart auto-refresh if needed
+            setupAutoRefresh();
+            
+            Toast.makeText(this, "✅ Settings applied and saved!", Toast.LENGTH_SHORT).show();
+            LogUtils.logUser("Log viewer settings updated - AutoRefresh: " + autoRefreshEnabled + 
+                ", Syntax: " + syntaxHighlightingEnabled + ", TextSize: " + textSize);
+        });
+        
+        builder.setNegativeButton("Cancel", null);
+        builder.show();
+    }
+    
+    private void showClearLogsDialog() {
+        new AlertDialog.Builder(this)
+            .setTitle("🗑️ Clear Logs")
+            .setMessage("Are you sure you want to clear all logs? This action cannot be undone.")
+            .setPositiveButton("Clear", (dialog, which) -> {
+                LogUtils.clearLogs();
+                allLogEntries.clear();
+                filteredLogEntries.clear();
+                logTextView.setText("📋 Logs cleared.\n\nNew logs will appear here as you use the app.");
+                updateStatistics();
+                Toast.makeText(this, "🗑️ Logs cleared", Toast.LENGTH_SHORT).show();
+            })
+            .setNegativeButton("Cancel", null)
+            .show();
+    }
+    
+    private void exportLogs() {
+        try {
+            File exportDir = new File(getExternalFilesDir(null), "exports");
+            if (!exportDir.exists()) {
+                exportDir.mkdirs();
+            }
+            
+            String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
+                .format(new Date());
+            File exportFile = new File(exportDir, "terraria_logs_" + timestamp + ".txt");
+            
+            try (FileWriter writer = new FileWriter(exportFile)) {
+                writer.write("=== TerrariaLoader Log Export ===\n");
+                writer.write("Exported: " + new Date().toString() + "\n");
+                writer.write("Total Entries: " + allLogEntries.size() + "\n");
+                writer.write("Filtered Entries: " + filteredLogEntries.size() + "\n");
+                writer.write("Filters - Type: " + currentTypeFilter + ", Level: " + currentLevelFilter + "\n");
+                writer.write("Search Query: " + (currentSearchQuery.isEmpty() ? "None" : currentSearchQuery) + "\n");
+                writer.write("\n=== LOG ENTRIES ===\n\n");
+                
+                for (LogEntry entry : filteredLogEntries) {
+                    writer.write(entry.fullText + "\n");
+                }
+            }
+            
+            // Share the exported file
+            Intent shareIntent = new Intent(Intent.ACTION_SEND);
+            shareIntent.setType("text/plain");
+            shareIntent.putExtra(Intent.EXTRA_STREAM,
+                FileProvider.getUriForFile(this, getPackageName() + ".provider", exportFile));
+            shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            
+            startActivity(Intent.createChooser(shareIntent, "Share Log Export"));
+            Toast.makeText(this, "✅ Logs exported: " + exportFile.getName(), Toast.LENGTH_LONG).show();
+            
+        } catch (Exception e) {
+            Toast.makeText(this, "❌ Export failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            LogUtils.logDebug("Log export error: " + e.getMessage());
+        }
+    }
+    
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        menu.add(0, 1, 0, "⚙️ Settings")
+            .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
+        menu.add(0, 2, 0, "🔄 Toggle Auto-refresh")
+            .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
+        menu.add(0, 3, 0, "📤 Export Logs")
+            .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
+        return true;
+    }
+    
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        switch (item.getItemId()) {
+            case 1:
+                showSettingsDialog();
+                return true;
+            case 2:
+                autoRefreshEnabled = !autoRefreshEnabled;
+                saveSettings(); // FIXED: Save when toggled
+                setupAutoRefresh();
+                String status = autoRefreshEnabled ? "enabled" : "disabled";
+                Toast.makeText(this, "🔄 Auto-refresh " + status, Toast.LENGTH_SHORT).show();
+                return true;
+            case 3:
+                exportLogs();
+                return true;
+            default:
+                return super.onOptionsItemSelected(item);
+        }
+    }
+    
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // Refresh logs when returning to activity
+        refreshLogs();
+        
+        // Restart auto-refresh if it was enabled
+        if (autoRefreshEnabled) {
+            setupAutoRefresh();
+        }
+    }
+    
+    @Override
+    protected void onPause() {
+        super.onPause();
+        // Stop auto-refresh when leaving activity
+        if (autoRefreshHandler != null && autoRefreshRunnable != null) {
+            autoRefreshHandler.removeCallbacks(autoRefreshRunnable);
+        }
+        
+        // FIXED: Save settings when leaving activity
+        saveSettings();
+    }
+    
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        // Clean up resources
+        if (executorService != null && !executorService.isShutdown()) {
+            executorService.shutdown();
+        }
+        if (autoRefreshHandler != null && autoRefreshRunnable != null) {
+            autoRefreshHandler.removeCallbacks(autoRefreshRunnable);
+        }
+        
+        LogUtils.logUser("Advanced Log Viewer closed");
+    }
+}
+
+
+/ModLoader/app/src/main/java/com/modloader/ui/LogViewerEnhancedActivity.java
+
+// File: LogViewerEnhancedActivity.java - Enhanced log viewer with filtering and search
+// Path: /app/src/main/java/com/modloader/ui/LogViewerEnhancedActivity.java
+
+package com.modloader.ui;
+
+import android.app.AlertDialog;
+import android.content.Intent;
+import android.os.Bundle;
+import android.os.Handler;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.view.Menu;
+import android.view.MenuItem;
+import android.view.View;
+import android.widget.*;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
+
+import com.modloader.R;
+import com.modloader.util.LogUtils;
+import com.modloader.util.DiagnosticBundleExporter;
+
+import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
+
+public class LogViewerEnhancedActivity extends AppCompatActivity {
+    
+    // UI Components
+    private LinearLayout filterSection;
+    private Spinner logTypeSpinner;
+    private Spinner logLevelSpinner;
+    private EditText searchEditText;
+    private TextView logStatsText;
+    private TextView logTextView;
+    private ScrollView logScrollView;
+    private SwipeRefreshLayout swipeRefreshLayout;
+    private CheckBox autoScrollCheckbox;
+    private Button refreshButton;
+    private Button clearLogsButton;
+    private Button exportLogsButton;
+    
+    // State variables
+    private Handler refreshHandler;
+    private Runnable refreshRunnable;
+    private boolean autoRefreshEnabled = true;
+    private boolean filtersVisible = true;
+    private String currentFilter = "All";
+    private String currentLevel = "All";
+    private String currentSearch = "";
+    
+    // Log data
+    private String fullLogContent = "";
+    private List<String> logLines = new ArrayList<>();
+    
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_log_viewer_enhanced);
+        
+        setTitle("Enhanced Log Viewer");
+        
+        initializeViews();
+        setupListeners();
+        setupSpinners();
+        startAutoRefresh();
+        
+        // Initial load
+        refreshLogs();
+    }
+    
+    private void initializeViews() {
+        // Filter section
+        filterSection = findViewById(R.id.filterSection);
+        logTypeSpinner = findViewById(R.id.logTypeSpinner);
+        logLevelSpinner = findViewById(R.id.logLevelSpinner);
+        searchEditText = findViewById(R.id.searchEditText);
+        
+        // Stats and controls
+        logStatsText = findViewById(R.id.logStatsText);
+        refreshButton = findViewById(R.id.refreshButton);
+        clearLogsButton = findViewById(R.id.clearLogsButton);
+        exportLogsButton = findViewById(R.id.exportLogsButton);
+        autoScrollCheckbox = findViewById(R.id.autoScrollCheckbox);
+        
+        // Main log display
+        logTextView = findViewById(R.id.logTextView);
+        logScrollView = findViewById(R.id.logScrollView);
+        swipeRefreshLayout = findViewById(R.id.swipeRefreshLayout);
+    }
+    
+    private void setupListeners() {
+        // Refresh button
+        refreshButton.setOnClickListener(v -> refreshLogs());
+        
+        // Clear logs button
+        clearLogsButton.setOnClickListener(v -> clearLogs());
+        
+        // Export logs button
+        exportLogsButton.setOnClickListener(v -> exportLogs());
+        
+        // Swipe refresh
+        swipeRefreshLayout.setOnRefreshListener(this::refreshLogs);
+        
+        // Search text watcher
+        searchEditText.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {}
+            
+            @Override
+            public void afterTextChanged(Editable s) {
+                currentSearch = s.toString();
+                applyFilters();
+            }
+        });
+        
+        // Spinner listeners
+        logTypeSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                currentFilter = parent.getItemAtPosition(position).toString();
+                applyFilters();
+            }
+            
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {}
+        });
+        
+        logLevelSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                currentLevel = parent.getItemAtPosition(position).toString();
+                applyFilters();
+            }
+            
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {}
+        });
+    }
+    
+    private void setupSpinners() {
+        // Log type spinner
+        String[] logTypes = {"All", "User", "Debug", "Info", "Warning", "Error"};
+        ArrayAdapter<String> typeAdapter = new ArrayAdapter<>(this, 
+            android.R.layout.simple_spinner_item, logTypes);
+        typeAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        logTypeSpinner.setAdapter(typeAdapter);
+        
+        // Log level spinner  
+        String[] logLevels = {"All", "DEBUG", "INFO", "WARNING", "ERROR", "USER"};
+        ArrayAdapter<String> levelAdapter = new ArrayAdapter<>(this,
+            android.R.layout.simple_spinner_item, logLevels);
+        levelAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        logLevelSpinner.setAdapter(levelAdapter);
+    }
+    
+    private void startAutoRefresh() {
+        refreshHandler = new Handler();
+        refreshRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (autoRefreshEnabled) {
+                    refreshLogs();
+                }
+                refreshHandler.postDelayed(this, 5000); // Refresh every 5 seconds
+            }
+        };
+        refreshHandler.post(refreshRunnable);
+    }
+    
+    private void refreshLogs() {
+        try {
+            // Get logs from LogUtils
+            String logs = LogUtils.getLogs();
+            if (logs == null || logs.isEmpty()) {
+                logs = "No logs available.\n\nIf you're experiencing issues, try:\n• Restarting the app\n• Checking storage permissions\n• Using other app features to generate logs";
+            }
+            
+            fullLogContent = logs;
+            logLines = parseLogLines(logs);
+            
+            // Update statistics
+            updateLogStats();
+            
+            // Apply current filters
+            applyFilters();
+            
+            // Stop refresh animation
+            if (swipeRefreshLayout.isRefreshing()) {
+                swipeRefreshLayout.setRefreshing(false);
+            }
+            
+        } catch (Exception e) {
+            String errorMsg = "Error loading logs: " + e.getMessage();
+            logTextView.setText(errorMsg);
+            updateLogStats(0, 0, 0, 0);
+            
+            if (swipeRefreshLayout.isRefreshing()) {
+                swipeRefreshLayout.setRefreshing(false);
+            }
+        }
+    }
+    
+    private List<String> parseLogLines(String logs) {
+        List<String> lines = new ArrayList<>();
+        if (logs != null && !logs.isEmpty()) {
+            String[] splitLines = logs.split("\n");
+            for (String line : splitLines) {
+                if (line != null && !line.trim().isEmpty()) {
+                    lines.add(line);
+                }
+            }
+        }
+        return lines;
+    }
+    
+    private void applyFilters() {
+        try {
+            List<String> filteredLines = new ArrayList<>();
+            int totalLines = logLines.size();
+            int errorCount = 0;
+            int warningCount = 0;
+            
+            for (String line : logLines) {
+                if (line == null || line.trim().isEmpty()) {
+                    continue;
+                }
+                
+                // Count errors and warnings
+                String lowerLine = line.toLowerCase();
+                if (lowerLine.contains("error") || lowerLine.contains("❌")) {
+                    errorCount++;
+                } else if (lowerLine.contains("warn") || lowerLine.contains("⚠️")) {
+                    warningCount++;
+                }
+                
+                // Apply filters
+                boolean includeByType = filterByType(line);
+                boolean includeByLevel = filterByLevel(line);  
+                boolean includeBySearch = filterBySearch(line);
+                
+                if (includeByType && includeByLevel && includeBySearch) {
+                    filteredLines.add(line);
+                }
+            }
+            
+            // Update display
+            StringBuilder displayContent = new StringBuilder();
+            for (String line : filteredLines) {
+                displayContent.append(line).append("\n");
+            }
+            
+            logTextView.setText(displayContent.toString());
+            updateLogStats(totalLines, filteredLines.size(), errorCount, warningCount);
+            
+            // Auto-scroll to bottom if enabled
+            if (autoScrollCheckbox.isChecked()) {
+                scrollToBottom();
+            }
+            
+        } catch (Exception e) {
+            logTextView.setText("Error applying filters: " + e.getMessage());
+        }
+    }
+    
+    private boolean filterByType(String line) {
+        if ("All".equals(currentFilter)) {
+            return true;
+        }
+        
+        String lowerLine = line.toLowerCase();
+        String lowerFilter = currentFilter.toLowerCase();
+        
+        return lowerLine.contains(lowerFilter) || 
+               (lowerFilter.equals("user") && (lowerLine.contains("✅") || lowerLine.contains("❌") || lowerLine.contains("⚠️")));
+    }
+    
+    private boolean filterByLevel(String line) {
+        if ("All".equals(currentLevel)) {
+            return true;
+        }
+        
+        return line.toUpperCase().contains(currentLevel);
+    }
+    
+    private boolean filterBySearch(String line) {
+        if (currentSearch == null || currentSearch.trim().isEmpty()) {
+            return true;
+        }
+        
+        return line.toLowerCase().contains(currentSearch.toLowerCase());
+    }
+    
+    private void updateLogStats() {
+        updateLogStats(logLines.size(), logLines.size(), 0, 0);
+    }
+    
+    private void updateLogStats(int total, int showing, int errors, int warnings) {
+        String statsText = String.format("Total: %d | Showing: %d | Errors: %d | Warnings: %d", 
+            total, showing, errors, warnings);
+        logStatsText.setText(statsText);
+    }
+    
+    private void scrollToBottom() {
+        logScrollView.post(() -> {
+            logScrollView.fullScroll(ScrollView.FOCUS_DOWN);
+        });
+    }
+    
+    private void clearLogs() {
+        new AlertDialog.Builder(this)
+            .setTitle("Clear Logs")
+            .setMessage("Are you sure you want to clear all logs? This cannot be undone.")
+            .setPositiveButton("Clear", (dialog, which) -> {
+                LogUtils.clearLogs();
+                logTextView.setText("Logs cleared.\n\nNew logs will appear as you use the app.");
+                updateLogStats(0, 0, 0, 0);
+                Toast.makeText(this, "Logs cleared", Toast.LENGTH_SHORT).show();
+            })
+            .setNegativeButton("Cancel", null)
+            .show();
+    }
+    
+    private void exportLogs() {
+        try {
+            // Create diagnostic bundle
+            File bundleFile = DiagnosticBundleExporter.createDiagnosticBundle(this);
+            
+            if (bundleFile != null && bundleFile.exists()) {
+                // Share the bundle
+                Intent shareIntent = new Intent(Intent.ACTION_SEND);
+                shareIntent.setType("application/zip");
+                shareIntent.putExtra(Intent.EXTRA_SUBJECT, "TerrariaLoader Diagnostic Bundle");
+                shareIntent.putExtra(Intent.EXTRA_TEXT, "Diagnostic bundle created on " + new java.util.Date().toString());
+                
+                // Use FileProvider to share the file
+                android.net.Uri fileUri = androidx.core.content.FileProvider.getUriForFile(
+                    this, getPackageName() + ".provider", bundleFile);
+                shareIntent.putExtra(Intent.EXTRA_STREAM, fileUri);
+                shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                
+                startActivity(Intent.createChooser(shareIntent, "Export Diagnostic Bundle"));
+                
+                Toast.makeText(this, "Diagnostic bundle created: " + bundleFile.getName(), 
+                    Toast.LENGTH_LONG).show();
+            } else {
+                Toast.makeText(this, "Failed to create diagnostic bundle", Toast.LENGTH_SHORT).show();
+            }
+            
+        } catch (Exception e) {
+            Toast.makeText(this, "Export failed: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+    }
+    
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        getMenuInflater().inflate(R.menu.log_viewer_menu, menu);
+        return true;
+    }
+    
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        int itemId = item.getItemId();
+        
+        if (itemId == R.id.action_toggle_filters) {
+            toggleFilters();
+            return true;
+        } else if (itemId == R.id.action_share_logs) {
+            exportLogs();
+            return true;
+        } else if (itemId == R.id.action_clear_logs) {
+            clearLogs();
+            return true;
+        } else if (itemId == R.id.action_settings) {
+            showSettings();
+            return true;
+        }
+        
+        return super.onOptionsItemSelected(item);
+    }
+    
+    private void toggleFilters() {
+        filtersVisible = !filtersVisible;
+        filterSection.setVisibility(filtersVisible ? View.VISIBLE : View.GONE);
+        Toast.makeText(this, "Filters " + (filtersVisible ? "shown" : "hidden"), Toast.LENGTH_SHORT).show();
+    }
+    
+    private void showSettings() {
+        // Simple settings dialog
+        View settingsView = getLayoutInflater().inflate(R.layout.dialog_log_settings, null);
+        
+        CheckBox autoRefreshCheck = settingsView.findViewById(R.id.autoRefreshCheckbox);
+        autoRefreshCheck.setChecked(autoRefreshEnabled);
+        
+        new AlertDialog.Builder(this)
+            .setTitle("Log Viewer Settings")
+            .setView(settingsView)
+            .setPositiveButton("OK", (dialog, which) -> {
+                autoRefreshEnabled = autoRefreshCheck.isChecked();
+                Toast.makeText(this, "Settings saved", Toast.LENGTH_SHORT).show();
+            })
+            .setNegativeButton("Cancel", null)
+            .show();
+    }
+    
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        if (refreshHandler != null && refreshRunnable != null) {
+            refreshHandler.removeCallbacks(refreshRunnable);
+        }
+    }
+    
+    @Override
+    protected void onPause() {
+        super.onPause();
+        autoRefreshEnabled = false;
+    }
+    
+    @Override
+    protected void onResume() {
+        super.onResume();
+        autoRefreshEnabled = true;
+        refreshLogs();
+    }
+}
+
+
+/ModLoader/app/src/main/java/com/modloader/ui/ModListActivity.java
+
+package com.modloader.ui;
+
+import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.Intent;
+import android.database.Cursor;
+import android.net.Uri;
+import android.os.Bundle;
+import android.provider.OpenableColumns;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.widget.Button;
+import android.widget.ImageButton;
+import android.widget.TextView;
+import android.widget.Toast;
+import android.widget.Switch; // Make sure this is imported if used in your XML
+
+import androidx.annotation.Nullable;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+
+import com.modloader.R;
+import com.modloader.installer.ModInstaller;
+import com.modloader.loader.ModManager;
+import com.modloader.util.LogUtils;
+
+import java.io.File;
+import java.util.List;
+
+public class ModListActivity extends AppCompatActivity {
+
+    private RecyclerView recyclerView;
+    private ModListAdapter modAdapter; // Changed from ModAdapter
+    private TextView modCountTextView;
+    private static final int PICK_MOD_FILE_REQUEST = 1;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_mod_list);
+
+        modCountTextView = findViewById(R.id.modCountTextView);
+        recyclerView = findViewById(R.id.recyclerViewMods);
+        recyclerView.setLayoutManager(new LinearLayoutManager(this));
+
+        ImageButton backButton = findViewById(R.id.backButton);
+        backButton.setOnClickListener(v -> onBackPressed());
+
+        Button addModButton = findViewById(R.id.addModButton);
+        addModButton.setOnClickListener(v -> openFilePicker());
+
+        Button refreshModsButton = findViewById(R.id.refreshModsButton);
+        refreshModsButton.setOnClickListener(v -> loadMods());
+
+        loadMods();
+    }
+
+    private void loadMods() {
+        ModManager.loadMods(this);
+        List<File> mods = ModManager.getAvailableMods();
+        modAdapter = new ModListAdapter(this, mods); // Changed to ModListAdapter
+        recyclerView.setAdapter(modAdapter);
+        updateModCount(mods.size());
+    }
+
+    private void updateModCount(int count) {
+        modCountTextView.setText("Total Mods: " + count + " (Enabled: " + ModManager.getEnabledModCount() + ")");
+    }
+
+    private void openFilePicker() {
+        Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+        intent.setType("*/*"); // Allow all file types, then filter
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        try {
+            startActivityForResult(Intent.createChooser(intent, "Select Mod File"), PICK_MOD_FILE_REQUEST);
+        } catch (android.content.ActivityNotFoundException ex) {
+            Toast.makeText(this, "Please install a File Manager.", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == PICK_MOD_FILE_REQUEST && resultCode == Activity.RESULT_OK) {
+            if (data != null && data.getData() != null) {
+                Uri uri = data.getData();
+                handlePickedFile(uri); // Added this method
+            }
+        }
+    }
+
+    // New method to handle picked files and install them
+    private void handlePickedFile(Uri uri) {
+        String filename = getFilenameFromUri(uri);
+        if (filename == null || !isValidModExtension(filename)) {
+            LogUtils.logUser("❌ Invalid mod file type selected.");
+            Toast.makeText(this, "Invalid mod file type. Only .dex, .jar, .dll, .hybrid are supported.", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("Install Mod");
+        builder.setMessage("Do you want to install '" + filename + "'?");
+        builder.setPositiveButton("Install", (dialog, which) -> {
+            boolean success = ModInstaller.installModAuto(this, uri);
+            if (success) {
+                Toast.makeText(this, "Mod installed successfully!", Toast.LENGTH_SHORT).show();
+                loadMods(); // Reload mods after installation
+            } else {
+                Toast.makeText(this, "Failed to install mod.", Toast.LENGTH_SHORT).show();
+            }
+        });
+        builder.setNegativeButton("Cancel", null);
+        builder.show();
+    }
+
+    private String getFilenameFromUri(Uri uri) {
+        String result = null;
+        if (uri.getScheme().equals("content")) {
+            try (Cursor cursor = getContentResolver().query(uri, null, null, null, null)) {
+                if (cursor != null && cursor.moveToFirst()) {
+                    int nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                    if (nameIndex != -1) {
+                        result = cursor.getString(nameIndex);
+                    }
+                }
+            }
+        }
+        if (result == null) {
+            result = uri.getPath();
+            int cut = result.lastIndexOf('/');
+            if (cut != -1) {
+                result = result.substring(cut + 1);
+            }
+        }
+        return result;
+    }
+
+    private boolean isValidModExtension(String filename) {
+        String lowerFilename = filename.toLowerCase();
+        for (String ext : ModInstaller.getSupportedExtensions()) {
+            if (lowerFilename.endsWith(ext)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        loadMods(); // Refresh mod list when activity resumes
+    }
+}
+
+
+
+/ModLoader/app/src/main/java/com/modloader/ui/ModListAdapter.java
+
+// File: ModListAdapter.java (Fixed Adapter Class) - NullPointerException Fix
+// Path: /storage/emulated/0/AndroidIDEProjects/TerrariaML/app/src/main/java/com/terrarialoader/ui/ModListAdapter.java
+
+package com.modloader.ui;
+
+import android.app.AlertDialog;
+import android.content.Context;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.ImageButton;
+import android.widget.Switch;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import androidx.annotation.NonNull;
+import androidx.recyclerview.widget.RecyclerView;
+
+import com.modloader.R;
+import com.modloader.installer.ModInstaller;
+import com.modloader.loader.ModManager;
+import com.modloader.loader.ModMetadata;
+import com.modloader.loader.ModBase;
+import com.modloader.util.LogUtils;
+
+import java.io.File;
+import java.util.List;
+
+public class ModListAdapter extends RecyclerView.Adapter<ModListAdapter.ModViewHolder> {
+
+    private final Context context;
+    private List<File> mods; // Changed to non-final to allow updates
+
+    public ModListAdapter(Context context, List<File> mods) {
+        this.context = context;
+        this.mods = mods;
+    }
+
+    @NonNull
+    @Override
+    public ModViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+        View view = LayoutInflater.from(context).inflate(R.layout.item_mod, parent, false);
+        return new ModViewHolder(view);
+    }
+
+    @Override
+    public void onBindViewHolder(@NonNull ModViewHolder holder, int position) {
+        File modFile = mods.get(position);
+        String modName = modFile.getName();
+        boolean isEnabled = !modName.endsWith(".disabled");
+
+        holder.modNameTextView.setText(modName);
+        
+        // FIXED: Null pointer protection for metadata
+        try {
+            // Get metadata safely
+            String cleanModName = modName.replace(".disabled", "").replace(".dex", "").replace(".jar", "").replace(".dll", "");
+            ModMetadata metadata = ModManager.getMetadata(cleanModName);
+            
+            if (metadata != null) {
+                // Use metadata if available
+                ModBase.ModType modType = metadata.getModType();
+                if (modType != null) {
+                    holder.modDescriptionTextView.setText("Type: " + modType.getDisplayName());
+                } else {
+                    holder.modDescriptionTextView.setText("Type: " + getModTypeFromFileName(modName));
+                }
+            } else {
+                // Fallback to file extension detection
+                holder.modDescriptionTextView.setText("Type: " + getModTypeFromFileName(modName));
+            }
+        } catch (Exception e) {
+            // Ultimate fallback
+            LogUtils.logDebug("Error getting mod metadata: " + e.getMessage());
+            holder.modDescriptionTextView.setText("Type: " + getModTypeFromFileName(modName));
+        }
+
+        holder.modSwitch.setChecked(isEnabled);
+        holder.modSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            try {
+                if (isChecked) {
+                    ModManager.enableMod(context, modFile);
+                } else {
+                    ModManager.disableMod(context, modFile);
+                }
+                // Refresh the adapter after mod state change
+                // Note: The list of files is not actually changing here, only their names.
+                // A better approach would be to reload the list of files entirely.
+                // For now, we will simply notify that the item has changed.
+                notifyItemChanged(position);
+            } catch (Exception e) {
+                LogUtils.logDebug("Error toggling mod: " + e.getMessage());
+                Toast.makeText(context, "Error toggling mod: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+            }
+        });
+
+        holder.modDeleteButton.setOnClickListener(v -> {
+            new AlertDialog.Builder(context)
+                    .setTitle("Delete Mod")
+                    .setMessage("Are you sure you want to delete " + modName + "?")
+                    .setPositiveButton("Delete", (dialog, which) -> {
+                        try {
+                            if (ModInstaller.uninstallMod(context, modName)) {
+                                // Remove from list and notify adapter
+                                mods.remove(position);
+                                notifyItemRemoved(position);
+                                notifyItemRangeChanged(position, mods.size());
+                                Toast.makeText(context, modName + " deleted.", Toast.LENGTH_SHORT).show();
+                            } else {
+                                Toast.makeText(context, "Failed to delete " + modName, Toast.LENGTH_SHORT).show();
+                            }
+                        } catch (Exception e) {
+                            LogUtils.logDebug("Error deleting mod: " + e.getMessage());
+                            Toast.makeText(context, "Error deleting mod: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                        }
+                    })
+                    .setNegativeButton("Cancel", null)
+                    .show();
+        });
+    }
+    
+    // Helper method to determine mod type from filename
+    private String getModTypeFromFileName(String fileName) {
+        String lowerName = fileName.toLowerCase();
+        if (lowerName.endsWith(".dex") || lowerName.endsWith(".dex.disabled")) {
+            return "DEX (Java)";
+        } else if (lowerName.endsWith(".jar") || lowerName.endsWith(".jar.disabled")) {
+            return "JAR (Java Library)";
+        } else if (lowerName.endsWith(".dll") || lowerName.endsWith(".dll.disabled")) {
+            return "DLL (C#/Native)";
+        } else {
+            return "Unknown";
+        }
+    }
+
+    @Override
+    public int getItemCount() {
+        return mods.size();
+    }
+
+    /**
+     * Updates the adapter's data set with a new list of mods.
+     * @param newMods The new list of mods to display.
+     */
+    public void updateMods(List<File> newMods) {
+        this.mods = newMods;
+        notifyDataSetChanged();
+    }
+
+    public static class ModViewHolder extends RecyclerView.ViewHolder {
+        TextView modNameTextView;
+        TextView modDescriptionTextView;
+        Switch modSwitch;
+        ImageButton modDeleteButton;
+
+        public ModViewHolder(@NonNull View itemView) {
+            super(itemView);
+            modNameTextView = itemView.findViewById(R.id.modNameTextView);
+            modDescriptionTextView = itemView.findViewById(R.id.modDescription);
+            modSwitch = itemView.findViewById(R.id.modSwitch);
+            modDeleteButton = itemView.findViewById(R.id.modDeleteButton);
+        }
+    }
+}
+
+
+
+/ModLoader/app/src/main/java/com/modloader/ui/ModManagementActivity.java
+
+// File: ModManagementActivity.java - Pure Mod Management (Post-Installation)
+// Path: /main/java/com/terrarialoader/ui/ModManagementActivity.java
+
+package com.modloader.ui;
+
+import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.Intent;
+import android.database.Cursor;
+import android.net.Uri;
+import android.os.Bundle;
+import android.provider.OpenableColumns;
+import android.view.View;
+import android.widget.Button;
+import android.widget.ImageButton;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+
+import com.modloader.R;
+import com.modloader.installer.ModInstaller;
+import com.modloader.loader.MelonLoaderManager;
+import com.modloader.loader.ModManager;
+import com.modloader.ui.ModListAdapter;
+import com.modloader.util.LogUtils;
+
+import java.io.File;
+import java.util.List;
+
+/**
+ * Pure mod management activity - assumes loader is already installed
+ * Focused solely on managing DLL and DEX mods
+ */
+public class ModManagementActivity extends AppCompatActivity {
+
+    private static final int REQUEST_SELECT_DLL = 1001;
+    private static final int REQUEST_SELECT_DEX = 1002;
+    
+    // UI Components
+    private TextView statusText;
+    private TextView loaderStatusText;
+    private RecyclerView modRecyclerView;
+    private ModListAdapter modAdapter;
+    private Button addDllModBtn;
+    private Button addDexModBtn;
+    private Button refreshBtn;
+    private Button backBtn;
+    private LinearLayout loaderInfoSection;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_mod_management);
+        
+        setTitle("🎮 Mod Management");
+        
+        initializeViews();
+        setupListeners();
+        loadMods();
+        updateStatus();
+    }
+
+    private void initializeViews() {
+        statusText = findViewById(R.id.statusText);
+        loaderStatusText = findViewById(R.id.loaderStatusText);
+        modRecyclerView = findViewById(R.id.modRecyclerView);
+        addDllModBtn = findViewById(R.id.addDllModBtn);
+        addDexModBtn = findViewById(R.id.addDexModBtn);
+        refreshBtn = findViewById(R.id.refreshBtn);
+        backBtn = findViewById(R.id.backBtn);
+        loaderInfoSection = findViewById(R.id.loaderInfoSection);
+        
+        // Setup RecyclerView
+        modRecyclerView.setLayoutManager(new LinearLayoutManager(this));
+    }
+
+    private void setupListeners() {
+        addDllModBtn.setOnClickListener(v -> {
+            if (!MelonLoaderManager.isMelonLoaderInstalled(this) && !MelonLoaderManager.isLemonLoaderInstalled(this)) {
+                showLoaderRequiredDialog();
+                return;
+            }
+            
+            Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+            intent.setType("*/*");
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            startActivityForResult(intent, REQUEST_SELECT_DLL);
+        });
+        
+        addDexModBtn.setOnClickListener(v -> {
+            Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+            intent.setType("*/*");
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            startActivityForResult(intent, REQUEST_SELECT_DEX);
+        });
+        
+        refreshBtn.setOnClickListener(v -> {
+            loadMods();
+            updateStatus();
+            Toast.makeText(this, "🔄 Mods refreshed", Toast.LENGTH_SHORT).show();
+        });
+        
+        backBtn.setOnClickListener(v -> finish());
+    }
+
+    private void loadMods() {
+        ModManager.loadMods(this);
+        List<File> allMods = ModManager.getAvailableMods();
+        
+        if (modAdapter == null) {
+            modAdapter = new ModListAdapter(this, allMods);
+            modRecyclerView.setAdapter(modAdapter);
+        } else {
+            // Update existing adapter
+            modAdapter.updateMods(allMods);
+        }
+        
+        LogUtils.logUser("Loaded " + allMods.size() + " mods for management");
+    }
+
+    private void updateStatus() {
+        // Check loader status
+        boolean melonInstalled = MelonLoaderManager.isMelonLoaderInstalled(this);
+        boolean lemonInstalled = MelonLoaderManager.isLemonLoaderInstalled(this);
+        
+        if (melonInstalled) {
+            loaderStatusText.setText("✅ MelonLoader " + MelonLoaderManager.getInstalledLoaderVersion() + " - DLL mods supported");
+            loaderStatusText.setTextColor(0xFF4CAF50); // Green
+            addDllModBtn.setEnabled(true);
+            addDllModBtn.setText("📥 Add DLL Mod");
+            loaderInfoSection.setVisibility(View.VISIBLE);
+        } else if (lemonInstalled) {
+            loaderStatusText.setText("✅ LemonLoader " + MelonLoaderManager.getInstalledLoaderVersion() + " - DLL mods supported");
+            loaderStatusText.setTextColor(0xFF4CAF50); // Green
+            addDllModBtn.setEnabled(true);
+            addDllModBtn.setText("📥 Add DLL Mod");
+            loaderInfoSection.setVisibility(View.VISIBLE);
+        } else {
+            loaderStatusText.setText("⚠️ No loader installed - DLL mods unavailable");
+            loaderStatusText.setTextColor(0xFFF44336); // Red
+            addDllModBtn.setEnabled(false);
+            addDllModBtn.setText("❌ Install Loader First");
+            loaderInfoSection.setVisibility(View.GONE);
+        }
+        
+        // Update mod counts
+        int enabledCount = ModManager.getEnabledModCount();
+        int totalCount = ModManager.getTotalModCount();
+        int dexCount = ModManager.getDexModCount();
+        int dllCount = ModManager.getDllModCount();
+        
+        statusText.setText(String.format("📊 Total: %d mods (%d enabled) | DEX/JAR: %d | DLL: %d", 
+            totalCount, enabledCount, dexCount, dllCount));
+    }
+
+    private void showLoaderRequiredDialog() {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("🔧 Loader Required");
+        builder.setMessage("DLL mods require MelonLoader or LemonLoader to be installed.\n\n" +
+                          "Would you like to set up a loader now?");
+        
+        builder.setPositiveButton("🚀 Setup Loader", (dialog, which) -> {
+            // Go to unified loader setup
+            Intent intent = new Intent(this, UnifiedLoaderActivity.class);
+            startActivity(intent);
+        });
+        
+        builder.setNegativeButton("📖 Manual Guide", (dialog, which) -> {
+            Intent intent = new Intent(this, InstructionsActivity.class);
+            startActivity(intent);
+        });
+        
+        builder.setNeutralButton("Cancel", null);
+        builder.show();
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        
+        if (resultCode != Activity.RESULT_OK || data == null || data.getData() == null) {
+            return;
+        }
+        
+        Uri uri = data.getData();
+        String filename = getFilenameFromUri(uri);
+        
+        if (filename == null) {
+            Toast.makeText(this, "Could not determine filename", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        
+        switch (requestCode) {
+            case REQUEST_SELECT_DLL:
+                handleDllModInstallation(uri, filename);
+                break;
+                
+            case REQUEST_SELECT_DEX:
+                handleDexModInstallation(uri, filename);
+                break;
+        }
+    }
+
+    private void handleDllModInstallation(Uri uri, String filename) {
+        if (!filename.toLowerCase().endsWith(".dll")) {
+            Toast.makeText(this, "⚠️ Please select a .dll file", Toast.LENGTH_LONG).show();
+            return;
+        }
+        
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("📥 Install DLL Mod");
+        builder.setMessage("Install '" + filename + "' as a DLL mod?\n\n" +
+                          "This mod will be loaded by MelonLoader when Terraria starts.");
+        
+        builder.setPositiveButton("Install", (dialog, which) -> {
+            boolean success = ModInstaller.installMod(this, uri, filename);
+            if (success) {
+                Toast.makeText(this, "✅ DLL mod installed: " + filename, Toast.LENGTH_SHORT).show();
+                loadMods();
+                updateStatus();
+            } else {
+                Toast.makeText(this, "❌ Failed to install DLL mod", Toast.LENGTH_LONG).show();
+            }
+        });
+        
+        builder.setNegativeButton("Cancel", null);
+        builder.show();
+    }
+
+    private void handleDexModInstallation(Uri uri, String filename) {
+        String lowerName = filename.toLowerCase();
+        if (!lowerName.endsWith(".dex") && !lowerName.endsWith(".jar")) {
+            Toast.makeText(this, "⚠️ Please select a .dex or .jar file", Toast.LENGTH_LONG).show();
+            return;
+        }
+        
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("📥 Install DEX/JAR Mod");
+        builder.setMessage("Install '" + filename + "' as a DEX/JAR mod?\n\n" +
+                          "This mod will be loaded directly by TerrariaLoader.");
+        
+        builder.setPositiveButton("Install", (dialog, which) -> {
+            boolean success = ModInstaller.installMod(this, uri, filename);
+            if (success) {
+                Toast.makeText(this, "✅ DEX/JAR mod installed: " + filename, Toast.LENGTH_SHORT).show();
+                loadMods();
+                updateStatus();
+            } else {
+                Toast.makeText(this, "❌ Failed to install DEX/JAR mod", Toast.LENGTH_LONG).show();
+            }
+        });
+        
+        builder.setNegativeButton("Cancel", null);
+        builder.show();
+    }
+
+    private String getFilenameFromUri(Uri uri) {
+        String filename = null;
+        
+        try (Cursor cursor = getContentResolver().query(uri, null, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (nameIndex >= 0) {
+                    filename = cursor.getString(nameIndex);
+                }
+            }
+        } catch (Exception e) {
+            LogUtils.logDebug("Could not get filename from URI: " + e.getMessage());
+        }
+        
+        if (filename == null) {
+            String path = uri.getPath();
+            if (path != null) {
+                int lastSlash = path.lastIndexOf('/');
+                if (lastSlash >= 0 && lastSlash < path.length() - 1) {
+                    filename = path.substring(lastSlash + 1);
+                }
+            }
+        }
+        
+        return filename;
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        loadMods();
+        updateStatus();
+    }
+}
+
+
 /ModLoader/app/src/main/java/com/modloader/ui/OfflineDiagnosticActivity.java
 
 // File: OfflineDiagnosticActivity.java (Part 1 - Main Class)
@@ -978,7 +2740,8 @@ public class OfflineDiagnosticActivity extends AppCompatActivity {
     }
 }
 
---------------------------------------------------------------------------------
+
+
 /ModLoader/app/src/main/java/com/modloader/ui/PluginConfigActivity.java
 
 // File: PluginConfigActivity.java - Plugin Configuration UI (150+ lines)
@@ -1508,7 +3271,7 @@ public class PluginConfigActivity extends AppCompatActivity {
     }
 }
 
---------------------------------------------------------------------------------
+
 /ModLoader/app/src/main/java/com/modloader/ui/PluginInstallActivity.java
 
 // File: PluginInstallActivity.java - Plugin Installation UI (200+ lines)
@@ -2039,7 +3802,7 @@ public class PluginInstallActivity extends AppCompatActivity {
     }
 }
 
---------------------------------------------------------------------------------
+
 /ModLoader/app/src/main/java/com/modloader/ui/PluginManagementActivity.java
 
 // File: PluginManagementActivity.java - Plugin Management UI (350+ lines)
@@ -2704,7 +4467,7 @@ public class PluginManagementActivity extends AppCompatActivity {
     }
 }
 
---------------------------------------------------------------------------------
+
 /ModLoader/app/src/main/java/com/modloader/ui/SettingsActivity.java
 
 // File: SettingsActivity.java (Enhanced UI with Operation Modes)
@@ -3308,7 +5071,7 @@ public class SettingsActivity extends AppCompatActivity {
     }
 }
 
---------------------------------------------------------------------------------
+
 /ModLoader/app/src/main/java/com/modloader/ui/SetupGuideActivity.java
 
 // File: SetupGuideActivity.java (Updated) - Added Offline ZIP Import
@@ -3600,7 +5363,7 @@ public class SetupGuideActivity extends AppCompatActivity {
     }
 }
 
---------------------------------------------------------------------------------
+
 /ModLoader/app/src/main/java/com/modloader/ui/UnifiedLoaderActivity.java
 
 // File: UnifiedLoaderActivity.java - Complete Fixed Version
@@ -4211,7 +5974,7 @@ public class UnifiedLoaderActivity extends AppCompatActivity implements
     }
 }
 
---------------------------------------------------------------------------------
+
 /ModLoader/app/src/main/java/com/modloader/ui/UnifiedLoaderController.java
 
 // File: UnifiedLoaderController.java - Fixed step progression for offline ZIP import
@@ -4914,8 +6677,9 @@ public class UnifiedLoaderController {
         // Already handled in logMessage method
     }
 }
+  
 
---------------------------------------------------------------------------------
+
 /ModLoader/app/src/main/java/com/modloader/ui/UnifiedLoaderListener.java
 
 // File: UnifiedLoaderListener.java - Missing interface for UnifiedLoaderActivity
@@ -4978,7 +6742,7 @@ public interface UnifiedLoaderListener {
     void onLogMessage(String message, UnifiedLoaderController.LogLevel level);
 }
 
---------------------------------------------------------------------------------
+
 /ModLoader/app/src/main/java/com/modloader/util/ApkInstaller.java
 
 // File: ApkInstaller.java (FIXED) - Enhanced APK Installation with Proper Error Handling
@@ -5491,7 +7255,7 @@ public class ApkInstaller {
     }
 }
 
---------------------------------------------------------------------------------
+
 /ModLoader/app/src/main/java/com/modloader/util/ApkPatcher.java
 
 // File: ApkPatcher.java - Enhanced APK patching with real MelonLoader injection
@@ -6214,7 +7978,7 @@ public class ApkPatcher {
     }
 }
 
---------------------------------------------------------------------------------
+
 /ModLoader/app/src/main/java/com/modloader/util/ApkValidator.java
 
 package com.modloader.util;
@@ -6406,7 +8170,7 @@ public class ApkValidator {
     }
 }
 
---------------------------------------------------------------------------------
+
 /ModLoader/app/src/main/java/com/modloader/util/DiagnosticBundleExporter.java
 
 // File: DiagnosticBundleExporter.java - Comprehensive Support Bundle Creator
@@ -6956,7 +8720,7 @@ public class DiagnosticBundleExporter {
     }
 }
 
---------------------------------------------------------------------------------
+
 /ModLoader/app/src/main/java/com/modloader/util/Downloader.java
 
 // File: Downloader.java (Fixed Utility Class)
@@ -7145,1686 +8909,3 @@ public class Downloader {
         return "net8/" + fileName;
     }
 }
-
---------------------------------------------------------------------------------
-/ModLoader/app/src/main/java/com/modloader/util/FileUtils.java
-
-// File: FileUtils.java - Complete with all missing methods
-// Path: /app/src/main/java/com/terrarialoader/util/FileUtils.java
-
-package com.modloader.util;
-
-import android.content.Context;
-import android.database.Cursor;
-import android.net.Uri;
-import android.os.Environment;
-import android.provider.OpenableColumns;
-
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.nio.channels.FileChannel;
-
-public class FileUtils {
-    
-    /**
-     * Copy a file from source to destination
-     * @param source Source file
-     * @param destination Destination file
-     * @return true if copy was successful, false otherwise
-     */
-    public static boolean copyFile(File source, File destination) {
-        if (source == null || destination == null) {
-            return false;
-        }
-        
-        if (!source.exists() || !source.isFile()) {
-            return false;
-        }
-        
-        // Create parent directories if they don't exist
-        File parentDir = destination.getParentFile();
-        if (parentDir != null && !parentDir.exists()) {
-            parentDir.mkdirs();
-        }
-        
-        try (FileInputStream in = new FileInputStream(source);
-             FileOutputStream out = new FileOutputStream(destination)) {
-            
-            byte[] buffer = new byte[8192];
-            int bytesRead;
-            while ((bytesRead = in.read(buffer)) != -1) {
-                out.write(buffer, 0, bytesRead);
-            }
-            
-            return true;
-            
-        } catch (Exception e) {
-            // Log the error if LogUtils is available
-            try {
-                LogUtils.logError("Failed to copy file: " + source.getAbsolutePath() + " to " + destination.getAbsolutePath(), e);
-            } catch (Exception logError) {
-                // Silent fail if logging not available
-            }
-            return false;
-        }
-    }
-    
-    /**
-     * Copy content from URI to file
-     * @param context Application context
-     * @param sourceUri Source URI
-     * @param destinationFile Destination file
-     * @return true if copy was successful, false otherwise
-     */
-    public static boolean copyUriToFile(Context context, Uri sourceUri, File destinationFile) {
-        if (context == null || sourceUri == null || destinationFile == null) {
-            return false;
-        }
-        
-        // Create parent directories if they don't exist
-        File parentDir = destinationFile.getParentFile();
-        if (parentDir != null && !parentDir.exists()) {
-            parentDir.mkdirs();
-        }
-        
-        try (InputStream in = context.getContentResolver().openInputStream(sourceUri);
-             FileOutputStream out = new FileOutputStream(destinationFile)) {
-            
-            if (in == null) {
-                return false;
-            }
-            
-            byte[] buffer = new byte[8192];
-            int bytesRead;
-            while ((bytesRead = in.read(buffer)) != -1) {
-                out.write(buffer, 0, bytesRead);
-            }
-            
-            return true;
-            
-        } catch (Exception e) {
-            try {
-                LogUtils.logError("Failed to copy URI to file: " + sourceUri.toString() + " to " + destinationFile.getAbsolutePath(), e);
-            } catch (Exception logError) {
-                // Silent fail if logging not available
-            }
-            return false;
-        }
-    }
-    
-    /**
-     * Get filename from URI
-     * @param context Application context
-     * @param uri URI to get filename from
-     * @return Filename or null if not found
-     */
-    public static String getFilenameFromUri(Context context, Uri uri) {
-        if (context == null || uri == null) {
-            return null;
-        }
-        
-        String filename = null;
-        
-        // Try to get filename from content resolver
-        try (Cursor cursor = context.getContentResolver().query(uri, null, null, null, null)) {
-            if (cursor != null && cursor.moveToFirst()) {
-                int nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
-                if (nameIndex != -1) {
-                    filename = cursor.getString(nameIndex);
-                }
-            }
-        } catch (Exception e) {
-            // Ignore and try fallback
-        }
-        
-        // Fallback: try to get filename from URI path
-        if (filename == null) {
-            String path = uri.getPath();
-            if (path != null) {
-                int lastSlash = path.lastIndexOf('/');
-                if (lastSlash != -1 && lastSlash < path.length() - 1) {
-                    filename = path.substring(lastSlash + 1);
-                }
-            }
-        }
-        
-        // Final fallback: use last path segment
-        if (filename == null) {
-            filename = uri.getLastPathSegment();
-        }
-        
-        return filename;
-    }
-    
-    /**
-     * Toggle mod file extension between .dll and .dll.disabled
-     * @param modFile Mod file to toggle
-     * @return true if toggle was successful, false otherwise
-     */
-    public static boolean toggleModFile(File modFile) {
-        if (modFile == null || !modFile.exists()) {
-            return false;
-        }
-        
-        String fileName = modFile.getName();
-        File newFile;
-        
-        if (fileName.endsWith(".dll.disabled")) {
-            // Enable mod: remove .disabled extension
-            String newName = fileName.substring(0, fileName.length() - ".disabled".length());
-            newFile = new File(modFile.getParent(), newName);
-        } else if (fileName.endsWith(".dll")) {
-            // Disable mod: add .disabled extension
-            String newName = fileName + ".disabled";
-            newFile = new File(modFile.getParent(), newName);
-        } else {
-            // Not a valid mod file
-            return false;
-        }
-        
-        boolean success = modFile.renameTo(newFile);
-        if (success) {
-            try {
-                LogUtils.logUser("Toggled mod: " + fileName + " -> " + newFile.getName());
-            } catch (Exception e) {
-                // Silent fail if logging not available
-            }
-        }
-        
-        return success;
-    }
-    
-    /**
-     * Format file size in human readable format
-     * @param bytes Size in bytes
-     * @return Formatted file size string
-     */
-    public static String formatFileSize(long bytes) {
-        if (bytes < 0) return "0 B";
-        if (bytes < 1024) return bytes + " B";
-        if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
-        if (bytes < 1024 * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024.0));
-        return String.format("%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0));
-    }
-    
-    /**
-     * Format file size in human readable format (int overload)
-     * @param bytes Size in bytes
-     * @return Formatted file size string
-     */
-    public static String formatFileSize(int bytes) {
-        return formatFileSize((long) bytes);
-    }
-    
-    /**
-     * Copy a file using FileChannel for better performance on large files
-     * @param source Source file
-     * @param destination Destination file
-     * @return true if copy was successful, false otherwise
-     */
-    public static boolean copyFileChannel(File source, File destination) {
-        if (source == null || destination == null) {
-            return false;
-        }
-        
-        if (!source.exists() || !source.isFile()) {
-            return false;
-        }
-        
-        // Create parent directories if they don't exist
-        File parentDir = destination.getParentFile();
-        if (parentDir != null && !parentDir.exists()) {
-            parentDir.mkdirs();
-        }
-        
-        try (FileInputStream fis = new FileInputStream(source);
-             FileOutputStream fos = new FileOutputStream(destination);
-             FileChannel sourceChannel = fis.getChannel();
-             FileChannel destChannel = fos.getChannel()) {
-            
-            destChannel.transferFrom(sourceChannel, 0, sourceChannel.size());
-            return true;
-            
-        } catch (Exception e) {
-            try {
-                LogUtils.logError("Failed to copy file with channel: " + source.getAbsolutePath() + " to " + destination.getAbsolutePath(), e);
-            } catch (Exception logError) {
-                // Silent fail if logging not available
-            }
-            return false;
-        }
-    }
-    
-    /**
-     * Copy files with progress callback
-     * @param source Source file
-     * @param destination Destination file
-     * @param callback Progress callback (can be null)
-     * @return true if copy was successful, false otherwise
-     */
-    public static boolean copyFileWithProgress(File source, File destination, CopyProgressCallback callback) {
-        if (source == null || destination == null) {
-            return false;
-        }
-        
-        if (!source.exists() || !source.isFile()) {
-            return false;
-        }
-        
-        // Create parent directories if they don't exist
-        File parentDir = destination.getParentFile();
-        if (parentDir != null && !parentDir.exists()) {
-            parentDir.mkdirs();
-        }
-        
-        try (FileInputStream in = new FileInputStream(source);
-             FileOutputStream out = new FileOutputStream(destination)) {
-            
-            byte[] buffer = new byte[8192];
-            long totalBytes = source.length();
-            long copiedBytes = 0;
-            int bytesRead;
-            
-            while ((bytesRead = in.read(buffer)) != -1) {
-                out.write(buffer, 0, bytesRead);
-                copiedBytes += bytesRead;
-                
-                if (callback != null) {
-                    int progress = (int) ((copiedBytes * 100) / totalBytes);
-                    callback.onProgress(progress, copiedBytes, totalBytes);
-                }
-            }
-            
-            if (callback != null) {
-                callback.onComplete(true);
-            }
-            
-            return true;
-            
-        } catch (Exception e) {
-            if (callback != null) {
-                callback.onComplete(false);
-            }
-            
-            try {
-                LogUtils.logError("Failed to copy file with progress: " + source.getAbsolutePath() + " to " + destination.getAbsolutePath(), e);
-            } catch (Exception logError) {
-                // Silent fail if logging not available
-            }
-            return false;
-        }
-    }
-    
-    /**
-     * Move a file from source to destination
-     * @param source Source file
-     * @param destination Destination file
-     * @return true if move was successful, false otherwise
-     */
-    public static boolean moveFile(File source, File destination) {
-        if (source == null || destination == null) {
-            return false;
-        }
-        
-        if (!source.exists() || !source.isFile()) {
-            return false;
-        }
-        
-        // Try simple rename first
-        if (source.renameTo(destination)) {
-            return true;
-        }
-        
-        // If rename failed, try copy and delete
-        if (copyFile(source, destination)) {
-            return source.delete();
-        }
-        
-        return false;
-    }
-    
-    /**
-     * Delete a file or directory recursively
-     * @param file File or directory to delete
-     * @return true if deletion was successful, false otherwise
-     */
-    public static boolean deleteRecursively(File file) {
-        if (file == null || !file.exists()) {
-            return true;
-        }
-        
-        if (file.isDirectory()) {
-            File[] children = file.listFiles();
-            if (children != null) {
-                for (File child : children) {
-                    if (!deleteRecursively(child)) {
-                        return false;
-                    }
-                }
-            }
-        }
-        
-        return file.delete();
-    }
-    
-    /**
-     * Create directory if it doesn't exist
-     * @param dir Directory to create
-     * @return true if directory exists or was created successfully
-     */
-    public static boolean ensureDirectory(File dir) {
-        if (dir == null) {
-            return false;
-        }
-        
-        if (dir.exists()) {
-            return dir.isDirectory();
-        }
-        
-        return dir.mkdirs();
-    }
-    
-    /**
-     * Get file size in human readable format
-     * @param file File to get size for
-     * @return Formatted file size string
-     */
-    public static String getHumanReadableSize(File file) {
-        if (file == null || !file.exists()) {
-            return "0 B";
-        }
-        
-        return getHumanReadableSize(file.length());
-    }
-    
-    /**
-     * Get file size in human readable format
-     * @param bytes Size in bytes
-     * @return Formatted file size string
-     */
-    public static String getHumanReadableSize(long bytes) {
-        return formatFileSize(bytes);
-    }
-    
-    /**
-     * Check if external storage is available for read and write
-     * @return true if external storage is available
-     */
-    public static boolean isExternalStorageWritable() {
-        String state = Environment.getExternalStorageState();
-        return Environment.MEDIA_MOUNTED.equals(state);
-    }
-    
-    /**
-     * Check if external storage is available to at least read
-     * @return true if external storage is readable
-     */
-    public static boolean isExternalStorageReadable() {
-        String state = Environment.getExternalStorageState();
-        return Environment.MEDIA_MOUNTED.equals(state) ||
-               Environment.MEDIA_MOUNTED_READ_ONLY.equals(state);
-    }
-    
-    /**
-     * Get app's external files directory
-     * @param context Application context
-     * @param type Type of files directory
-     * @return External files directory
-     */
-    public static File getExternalFilesDir(Context context, String type) {
-        if (context == null) {
-            return null;
-        }
-        return context.getExternalFilesDir(type);
-    }
-    
-    /**
-     * Get app's cache directory
-     * @param context Application context
-     * @return Cache directory
-     */
-    public static File getCacheDir(Context context) {
-        if (context == null) {
-            return null;
-        }
-        return context.getCacheDir();
-    }
-    
-    /**
-     * Copy an input stream to an output stream
-     * @param in Input stream
-     * @param out Output stream
-     * @throws IOException if copy fails
-     */
-    public static void copyStream(InputStream in, OutputStream out) throws IOException {
-        byte[] buffer = new byte[8192];
-        int bytesRead;
-        while ((bytesRead = in.read(buffer)) != -1) {
-            out.write(buffer, 0, bytesRead);
-        }
-    }
-    
-    /**
-     * Get file extension from filename
-     * @param filename Filename to get extension from
-     * @return File extension (without dot) or empty string if no extension
-     */
-    public static String getFileExtension(String filename) {
-        if (filename == null || filename.isEmpty()) {
-            return "";
-        }
-        
-        int lastDot = filename.lastIndexOf('.');
-        if (lastDot == -1 || lastDot == filename.length() - 1) {
-            return "";
-        }
-        
-        return filename.substring(lastDot + 1).toLowerCase();
-    }
-    
-    /**
-     * Get filename without extension
-     * @param filename Filename to process
-     * @return Filename without extension
-     */
-    public static String getFilenameWithoutExtension(String filename) {
-        if (filename == null || filename.isEmpty()) {
-            return "";
-        }
-        
-        int lastDot = filename.lastIndexOf('.');
-        if (lastDot == -1) {
-            return filename;
-        }
-        
-        return filename.substring(0, lastDot);
-    }
-    
-    /**
-     * Check if a file has a specific extension
-     * @param file File to check
-     * @param extension Extension to check for (without dot)
-     * @return true if file has the specified extension
-     */
-    public static boolean hasExtension(File file, String extension) {
-        if (file == null || extension == null) {
-            return false;
-        }
-        
-        String fileExtension = getFileExtension(file.getName());
-        return fileExtension.equalsIgnoreCase(extension);
-    }
-    
-    /**
-     * Get directory size recursively
-     * @param directory Directory to calculate size for
-     * @return Total size in bytes
-     */
-    public static long getDirectorySize(File directory) {
-        if (directory == null || !directory.exists() || !directory.isDirectory()) {
-            return 0;
-        }
-        
-        long size = 0;
-        File[] files = directory.listFiles();
-        if (files != null) {
-            for (File file : files) {
-                if (file.isFile()) {
-                    size += file.length();
-                } else if (file.isDirectory()) {
-                    size += getDirectorySize(file);
-                }
-            }
-        }
-        
-        return size;
-    }
-    
-    /**
-     * Interface for copy progress callbacks
-     */
-    public interface CopyProgressCallback {
-        void onProgress(int percentage, long copiedBytes, long totalBytes);
-        void onComplete(boolean success);
-    }
-}
-
---------------------------------------------------------------------------------
-/ModLoader/app/src/main/java/com/modloader/util/LogUtils.java
-
-// File: LogUtils.java - Complete logging utility class
-// Path: /storage/emulated/0/AndroidIDEProjects/ModLoader/app/src/main/java/com/modloader/util/LogUtils.java
-
-package com.modloader.util;
-
-import android.content.Context;
-import android.util.Log;
-import com.modloader.logging.FileLogger;
-import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.Locale;
-import java.util.concurrent.ConcurrentLinkedQueue;
-
-public class LogUtils {
-    private static final String TAG = "TerrariaLoader";
-    private static final String DEBUG_TAG = "TL_Debug";
-    private static final String USER_TAG = "TL_User";
-    private static final String ERROR_TAG = "TL_Error";
-    
-    private static Context applicationContext;
-    private static FileLogger fileLogger;
-    private static boolean isInitialized = false;
-    private static final ConcurrentLinkedQueue<String> logBuffer = new ConcurrentLinkedQueue<>();
-    private static final SimpleDateFormat timestampFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US);
-    
-    // Log levels
-    public static final int LEVEL_DEBUG = 0;
-    public static final int LEVEL_INFO = 1;
-    public static final int LEVEL_WARNING = 2;
-    public static final int LEVEL_ERROR = 3;
-    public static final int LEVEL_USER = 4;
-    
-    private static int currentLogLevel = LEVEL_DEBUG; // Default to show all logs
-    
-    /**
-     * Initialize LogUtils with application context
-     */
-    public static void initialize(Context context) {
-        if (context == null) {
-            Log.e(TAG, "Cannot initialize LogUtils with null context");
-            return;
-        }
-        
-        applicationContext = context.getApplicationContext();
-        
-        try {
-            fileLogger = FileLogger.getInstance(applicationContext);
-            isInitialized = true;
-            logDebug("LogUtils initialized successfully");
-            
-            // Process any buffered logs
-            processBufferedLogs();
-            
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to initialize LogUtils", e);
-            isInitialized = false;
-        }
-    }
-    
-    /**
-     * Initialize app startup logging
-     */
-    public static void initializeAppStartup() {
-        logUser("🚀 TerrariaLoader starting up...");
-        logDebug("App startup initialization");
-        logDebug("Android Version: " + android.os.Build.VERSION.RELEASE);
-        logDebug("Device Model: " + android.os.Build.MODEL);
-        logDebug("App Version: " + getAppVersion());
-    }
-    
-    /**
-     * Basic logging methods
-     */
-    public static void logDebug(String message) {
-        logMessage(LEVEL_DEBUG, DEBUG_TAG, message);
-    }
-    
-    public static void logInfo(String message) {
-        logMessage(LEVEL_INFO, TAG, message);
-    }
-    
-    public static void logWarning(String message) {
-        logMessage(LEVEL_WARNING, TAG, message);
-    }
-    
-    public static void logError(String message) {
-        logMessage(LEVEL_ERROR, ERROR_TAG, message);
-    }
-    
-    public static void logError(String message, Throwable throwable) {
-        String fullMessage = message;
-        if (throwable != null) {
-            fullMessage += "\n" + Log.getStackTraceString(throwable);
-        }
-        logMessage(LEVEL_ERROR, ERROR_TAG, fullMessage);
-    }
-    
-    public static void logUser(String message) {
-        logMessage(LEVEL_USER, USER_TAG, message);
-    }
-    
-    /**
-     * APK Process logging methods
-     */
-    public static void logApkProcessStart(String operation, String apkName) {
-        logUser("🔧 Starting " + operation + " for: " + apkName);
-        logDebug("[APK_PROCESS_START] Operation: " + operation + ", APK: " + apkName);
-    }
-    
-    public static void logApkProcessStep(String stepName, String details) {
-        logUser("📋 " + stepName + ": " + details);
-        logDebug("[APK_PROCESS_STEP] " + stepName + " - " + details);
-    }
-    
-    public static void logApkProcessComplete(boolean success, String result) {
-        if (success) {
-            logUser("✅ APK Process completed successfully: " + result);
-        } else {
-            logUser("❌ APK Process failed: " + result);
-        }
-        logDebug("[APK_PROCESS_COMPLETE] Success: " + success + ", Result: " + result);
-    }
-    
-    public static void logApkProcessError(String operation, String error) {
-        logUser("❌ " + operation + " failed: " + error);
-        logDebug("[APK_PROCESS_ERROR] " + operation + " - " + error);
-    }
-    
-    public static void logApkProcessWarning(String operation, String warning) {
-        logUser("⚠️ " + operation + " warning: " + warning);
-        logDebug("[APK_PROCESS_WARNING] " + operation + " - " + warning);
-    }
-    
-    /**
-     * Validation logging methods
-     */
-    public static void logValidationStart(String processId, String target) {
-        logDebug("[VALIDATION_START] ProcessID: " + processId + ", Target: " + target);
-    }
-    
-    public static void logValidationComplete(String processId, boolean isValid, int issueCount) {
-        String status = isValid ? "PASSED" : "FAILED";
-        logDebug("[VALIDATION_COMPLETE] ProcessID: " + processId + ", Status: " + status + ", Issues: " + issueCount);
-        
-        if (isValid) {
-            logUser("✅ Validation passed for process: " + processId);
-        } else {
-            logUser("❌ Validation failed for process: " + processId + " (" + issueCount + " issues)");
-        }
-    }
-    
-    /**
-     * File operation logging methods
-     */
-    public static void logFileOperation(String operation, String filePath, boolean success) {
-        String status = success ? "SUCCESS" : "FAILED";
-        String icon = success ? "✅" : "❌";
-        logDebug("[FILE_OP] " + operation + " - " + filePath + " - " + status);
-        logUser(icon + " " + operation + ": " + new File(filePath).getName());
-    }
-    
-    public static void logFileCreated(String filePath) {
-        logFileOperation("File Created", filePath, true);
-    }
-    
-    public static void logFileDeleted(String filePath) {
-        logFileOperation("File Deleted", filePath, true);
-    }
-    
-    public static void logFileCopySuccess(String source, String destination) {
-        logDebug("[FILE_COPY] " + source + " -> " + destination + " - SUCCESS");
-        logUser("📄 Copied: " + new File(source).getName());
-    }
-    
-    public static void logFileCopyError(String source, String destination, String error) {
-        logDebug("[FILE_COPY] " + source + " -> " + destination + " - FAILED: " + error);
-        logUser("❌ Copy failed: " + new File(source).getName() + " - " + error);
-    }
-    
-    /**
-     * Loader operation logging methods
-     */
-    public static void logLoaderOperation(String loaderType, String operation, String details) {
-        logUser("🔧 " + loaderType + " " + operation + ": " + details);
-        logDebug("[LOADER_OP] " + loaderType + " - " + operation + " - " + details);
-    }
-    
-    public static void logLoaderInstallStart(String loaderType) {
-        logLoaderOperation(loaderType, "Installation", "Starting installation process");
-    }
-    
-    public static void logLoaderInstallSuccess(String loaderType, String installPath) {
-        logLoaderOperation(loaderType, "Installation", "Successfully installed to " + installPath);
-    }
-    
-    public static void logLoaderInstallError(String loaderType, String error) {
-        logUser("❌ " + loaderType + " installation failed: " + error);
-        logDebug("[LOADER_INSTALL_ERROR] " + loaderType + " - " + error);
-    }
-    
-    /**
-     * Mod operation logging methods
-     */
-    public static void logModOperation(String modName, String operation, boolean success) {
-        String icon = success ? "✅" : "❌";
-        String status = success ? "succeeded" : "failed";
-        logUser(icon + " Mod " + operation + " " + status + ": " + modName);
-        logDebug("[MOD_OP] " + modName + " - " + operation + " - " + status);
-    }
-    
-    public static void logModInstalled(String modName, String modType) {
-        logUser("📦 Installed " + modType + " mod: " + modName);
-        logDebug("[MOD_INSTALL] " + modName + " (" + modType + ") - SUCCESS");
-    }
-    
-    public static void logModEnabled(String modName) {
-        logModOperation(modName, "enable", true);
-    }
-    
-    public static void logModDisabled(String modName) {
-        logModOperation(modName, "disable", true);
-    }
-    
-    public static void logModDeleted(String modName) {
-        logModOperation(modName, "deletion", true);
-    }
-    
-    public static void logModLoadError(String modName, String error) {
-        logUser("❌ Failed to load mod: " + modName + " - " + error);
-        logDebug("[MOD_LOAD_ERROR] " + modName + " - " + error);
-    }
-    
-    /**
-     * Directory operation logging methods
-     */
-    public static void logDirectoryCreated(String path) {
-        logDebug("[DIR_CREATE] " + path + " - SUCCESS");
-        logUser("📁 Created directory: " + new File(path).getName());
-    }
-    
-    public static void logDirectoryCreateError(String path, String error) {
-        logDebug("[DIR_CREATE] " + path + " - FAILED: " + error);
-        logUser("❌ Failed to create directory: " + new File(path).getName());
-    }
-    
-    public static void logDirectoryCleanup(String path, int filesDeleted) {
-        logDebug("[DIR_CLEANUP] " + path + " - Deleted " + filesDeleted + " files");
-        logUser("🧹 Cleaned up directory: " + new File(path).getName() + " (" + filesDeleted + " files)");
-    }
-    
-    /**
-     * Migration logging methods
-     */
-    public static void logMigrationStart(String fromVersion, String toVersion) {
-        logUser("🔄 Starting migration from " + fromVersion + " to " + toVersion);
-        logDebug("[MIGRATION_START] " + fromVersion + " -> " + toVersion);
-    }
-    
-    public static void logMigrationComplete(String fromVersion, String toVersion, int itemsMigrated) {
-        logUser("✅ Migration completed: " + itemsMigrated + " items migrated");
-        logDebug("[MIGRATION_COMPLETE] " + fromVersion + " -> " + toVersion + " - " + itemsMigrated + " items");
-    }
-    
-    public static void logMigrationError(String fromVersion, String toVersion, String error) {
-        logUser("❌ Migration failed: " + error);
-        logDebug("[MIGRATION_ERROR] " + fromVersion + " -> " + toVersion + " - " + error);
-    }
-    
-    /**
-     * Network/Download logging methods
-     */
-    public static void logDownloadStart(String url, String filename) {
-        logUser("⬇️ Downloading: " + filename);
-        logDebug("[DOWNLOAD_START] " + url + " -> " + filename);
-    }
-    
-    public static void logDownloadProgress(String filename, int progress) {
-        logDebug("[DOWNLOAD_PROGRESS] " + filename + " - " + progress + "%");
-    }
-    
-    public static void logDownloadComplete(String filename, long fileSize) {
-        logUser("✅ Downloaded: " + filename + " (" + formatFileSize(fileSize) + ")");
-        logDebug("[DOWNLOAD_COMPLETE] " + filename + " - " + fileSize + " bytes");
-    }
-    
-    public static void logDownloadError(String filename, String error) {
-        logUser("❌ Download failed: " + filename + " - " + error);
-        logDebug("[DOWNLOAD_ERROR] " + filename + " - " + error);
-    }
-    
-    /**
-     * Core logging implementation
-     */
-    private static void logMessage(int level, String tag, String message) {
-        if (level < currentLogLevel) {
-            return; // Skip logs below current level
-        }
-        
-        String timestamp = timestampFormat.format(new Date());
-        String formattedMessage = "[" + timestamp + "] " + message;
-        
-        // Always log to Android logcat
-        switch (level) {
-            case LEVEL_DEBUG:
-                Log.d(tag, message);
-                break;
-            case LEVEL_INFO:
-            case LEVEL_USER:
-                Log.i(tag, message);
-                break;
-            case LEVEL_WARNING:
-                Log.w(tag, message);
-                break;
-            case LEVEL_ERROR:
-                Log.e(tag, message);
-                break;
-        }
-        
-        // Log to file if available
-        if (isInitialized && fileLogger != null) {
-            try {
-                switch (level) {
-                    case LEVEL_DEBUG:
-                        fileLogger.logDebug(tag, message);
-                        break;
-                    case LEVEL_INFO:
-                        fileLogger.logInfo(tag, message);
-                        break;
-                    case LEVEL_WARNING:
-                        fileLogger.logWarning(tag, message);
-                        break;
-                    case LEVEL_ERROR:
-                        fileLogger.logError(tag, message);
-                        break;
-                    case LEVEL_USER:
-                        fileLogger.logUser(message);
-                        break;
-                }
-            } catch (Exception e) {
-                Log.e(TAG, "Failed to write to file logger", e);
-            }
-        } else {
-            // Buffer logs if not initialized yet
-            logBuffer.offer(level + "|" + tag + "|" + message);
-        }
-    }
-    
-    /**
-     * Process any logs that were buffered before initialization
-     */
-    private static void processBufferedLogs() {
-        String bufferedLog;
-        while ((bufferedLog = logBuffer.poll()) != null) {
-            try {
-                String[] parts = bufferedLog.split("\\|", 3);
-                if (parts.length == 3) {
-                    int level = Integer.parseInt(parts[0]);
-                    String tag = parts[1];
-                    String message = parts[2];
-                    logMessage(level, tag, message);
-                }
-            } catch (Exception e) {
-                Log.e(TAG, "Failed to process buffered log: " + bufferedLog, e);
-            }
-        }
-    }
-    
-    /**
-     * Utility methods
-     */
-    public static void setLogLevel(int level) {
-        currentLogLevel = level;
-        logDebug("Log level set to: " + level);
-    }
-    
-    public static int getLogLevel() {
-        return currentLogLevel;
-    }
-    
-    public static void setDebugEnabled(boolean enabled) {
-        if (enabled) {
-            setLogLevel(LEVEL_DEBUG);
-            logDebug("Debug logging enabled");
-        } else {
-            setLogLevel(LEVEL_INFO);
-            logInfo("Debug logging disabled");
-        }
-    }
-    
-    public static boolean isDebugEnabled() {
-        return currentLogLevel <= LEVEL_DEBUG;
-    }
-    
-    public static boolean isInitialized() {
-        return isInitialized;
-    }
-    
-    public static String getLogs() {
-        if (fileLogger != null) {
-            return fileLogger.readAllLogs();
-        }
-        return "FileLogger not initialized";
-    }
-    
-    public static String getCurrentLogs() {
-        if (fileLogger != null) {
-            return fileLogger.readCurrentLog();
-        }
-        return "FileLogger not initialized";
-    }
-    
-    public static boolean exportLogs(File exportFile) {
-        if (fileLogger != null) {
-            return fileLogger.exportLogs(exportFile);
-        }
-        return false;
-    }
-    
-    public static void clearLogs() {
-        if (fileLogger != null) {
-            fileLogger.clearLogs();
-            logUser("🧹 All logs cleared");
-        }
-    }
-    
-    public static FileLogger.LogStats getLogStats() {
-        if (fileLogger != null) {
-            return fileLogger.getLogStats();
-        }
-        return new FileLogger.LogStats(); // Return empty stats
-    }
-    
-    public static java.util.List<File> getAvailableLogFiles() {
-        java.util.List<File> logFiles = new java.util.ArrayList<>();
-        if (fileLogger != null) {
-            File logDir = fileLogger.getLogDirectory();
-            if (logDir != null && logDir.exists()) {
-                File[] files = logDir.listFiles((dir, name) -> name.endsWith(".txt"));
-                if (files != null) {
-                    for (File file : files) {
-                        logFiles.add(file);
-                    }
-                }
-            }
-        }
-        return logFiles;
-    }
-    
-    public static String readLogFile(int logIndex) {
-        if (fileLogger == null) {
-            return "FileLogger not initialized";
-        }
-        
-        File logDir = fileLogger.getLogDirectory();
-        if (logDir == null || !logDir.exists()) {
-            return "Log directory not found";
-        }
-        
-        File logFile;
-        if (logIndex == 0) {
-            logFile = new File(logDir, "AppLog.txt");
-        } else {
-            logFile = new File(logDir, "AppLog" + logIndex + ".txt");
-        }
-        
-        if (!logFile.exists()) {
-            return "Log file " + logIndex + " not found";
-        }
-        
-        StringBuilder content = new StringBuilder();
-        try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.FileReader(logFile))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                content.append(line).append("\n");
-            }
-        } catch (java.io.IOException e) {
-            return "Error reading log file " + logIndex + ": " + e.getMessage();
-        }
-        
-        return content.toString();
-    }
-    
-    private static String getAppVersion() {
-        if (applicationContext != null) {
-            try {
-                return applicationContext.getPackageManager()
-                        .getPackageInfo(applicationContext.getPackageName(), 0)
-                        .versionName;
-            } catch (Exception e) {
-                return "Unknown";
-            }
-        }
-        return "Unknown";
-    }
-    
-    private static String formatFileSize(long bytes) {
-        if (bytes < 1024) return bytes + " B";
-        if (bytes < 1024 * 1024) return String.format(Locale.US, "%.1f KB", bytes / 1024.0);
-        if (bytes < 1024 * 1024 * 1024) return String.format(Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0));
-        return String.format(Locale.US, "%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0));
-    }
-    
-    /**
-     * Crash reporting
-     */
-    public static void logCrash(String component, Throwable throwable) {
-        logError("CRASH in " + component + ": " + throwable.getMessage(), throwable);
-        
-        // Write crash to separate file
-        if (applicationContext != null) {
-            try {
-                File crashFile = new File(applicationContext.getExternalFilesDir(null), 
-                    "TerrariaLoader/com.and.games505.TerrariaPaid/AppLogs/crash_" + System.currentTimeMillis() + ".txt");
-                crashFile.getParentFile().mkdirs();
-                
-                try (FileWriter writer = new FileWriter(crashFile)) {
-                    writer.write("=== TerrariaLoader Crash Report ===\n");
-                    writer.write("Timestamp: " + new Date().toString() + "\n");
-                    writer.write("Component: " + component + "\n");
-                    writer.write("Error: " + throwable.getMessage() + "\n\n");
-                    writer.write("Stack Trace:\n");
-                    writer.write(Log.getStackTraceString(throwable));
-                    writer.write("\n\n=== Device Info ===\n");
-                    writer.write("Android Version: " + android.os.Build.VERSION.RELEASE + "\n");
-                    writer.write("Device Model: " + android.os.Build.MODEL + "\n");
-                    writer.write("App Version: " + getAppVersion() + "\n");
-                }
-                
-                logDebug("Crash report written to: " + crashFile.getName());
-            } catch (IOException e) {
-                Log.e(TAG, "Failed to write crash report", e);
-            }
-        }
-    }
-    
-    /**
-     * Performance logging
-     */
-    public static void logPerformance(String operation, long startTime, long endTime) {
-        long duration = endTime - startTime;
-        String formattedDuration;
-        
-        if (duration < 1000) {
-            formattedDuration = duration + "ms";
-        } else if (duration < 60000) {
-            formattedDuration = String.format(Locale.US, "%.1fs", duration / 1000.0);
-        } else {
-            long seconds = duration / 1000;
-            long minutes = seconds / 60;
-            seconds = seconds % 60;
-            formattedDuration = String.format(Locale.US, "%dm %ds", minutes, seconds);
-        }
-        
-        logDebug("[PERFORMANCE] " + operation + " completed in " + formattedDuration);
-    }
-    
-    public static void logMemoryUsage() {
-        Runtime runtime = Runtime.getRuntime();
-        long maxMemory = runtime.maxMemory();
-        long totalMemory = runtime.totalMemory();
-        long freeMemory = runtime.freeMemory();
-        long usedMemory = totalMemory - freeMemory;
-        
-        logDebug("[MEMORY] Used: " + formatFileSize(usedMemory) + 
-                ", Free: " + formatFileSize(freeMemory) + 
-                ", Total: " + formatFileSize(totalMemory) + 
-                ", Max: " + formatFileSize(maxMemory));
-    }
-    
-    /**
-     * Cleanup resources
-     */
-    public static void shutdown() {
-        if (fileLogger != null) {
-            fileLogger.shutdown();
-        }
-        logBuffer.clear();
-        isInitialized = false;
-    }
-}
-
---------------------------------------------------------------------------------
-/ModLoader/app/src/main/java/com/modloader/util/MelonLoaderDiagnostic.java
-
-// File: MelonLoaderDiagnostic.java (Diagnostic Tool)
-// Path: /storage/emulated/0/AndroidIDEProjects/TerrariaML/app/src/main/java/com/terrarialoader/util/MelonLoaderDiagnostic.java
-
-package com.modloader.util;
-
-import android.content.Context;
-import com.modloader.loader.MelonLoaderManager;
-import java.io.File;
-
-public class MelonLoaderDiagnostic {
-    
-    public static String generateDetailedDiagnostic(Context context, String gamePackage) {
-        StringBuilder diagnostic = new StringBuilder();
-        diagnostic.append("=== DETAILED MELONLOADER DIAGNOSTIC ===\n\n");
-        
-        // Check all required directories and files
-        File baseDir = PathManager.getGameBaseDir(context, gamePackage);
-        File melonLoaderDir = PathManager.getMelonLoaderDir(context, gamePackage);
-        File net8Dir = PathManager.getMelonLoaderNet8Dir(context, gamePackage);
-        File net35Dir = PathManager.getMelonLoaderNet35Dir(context, gamePackage);
-        File depsDir = PathManager.getMelonLoaderDependenciesDir(context, gamePackage);
-        
-        diagnostic.append("📁 DIRECTORY STATUS:\n");
-        diagnostic.append("Base Dir: ").append(checkDirectory(baseDir)).append("\n");
-        diagnostic.append("MelonLoader Dir: ").append(checkDirectory(melonLoaderDir)).append("\n");
-        diagnostic.append("NET8 Dir: ").append(checkDirectory(net8Dir)).append("\n");
-        diagnostic.append("NET35 Dir: ").append(checkDirectory(net35Dir)).append("\n");
-        diagnostic.append("Dependencies Dir: ").append(checkDirectory(depsDir)).append("\n\n");
-        
-        // Check for required NET8 files
-        diagnostic.append("🔸 NET8 RUNTIME FILES:\n");
-        String[] net8Files = {
-            "MelonLoader.dll",
-            "0Harmony.dll", 
-            "MonoMod.RuntimeDetour.dll",
-            "MonoMod.Utils.dll",
-            "Il2CppInterop.Runtime.dll"
-        };
-        
-        int net8Found = 0;
-        for (String fileName : net8Files) {
-            File file = new File(net8Dir, fileName);
-            boolean exists = file.exists() && file.length() > 0;
-            diagnostic.append("  ").append(exists ? "✅" : "❌").append(" ").append(fileName);
-            if (exists) {
-                net8Found++;
-                diagnostic.append(" (").append(FileUtils.formatFileSize(file.length())).append(")");
-            }
-            diagnostic.append("\n");
-        }
-        diagnostic.append("NET8 Score: ").append(net8Found).append("/").append(net8Files.length).append("\n\n");
-        
-        // Check for required NET35 files
-        diagnostic.append("🔸 NET35 RUNTIME FILES:\n");
-        String[] net35Files = {
-            "MelonLoader.dll",
-            "0Harmony.dll",
-            "MonoMod.RuntimeDetour.dll", 
-            "MonoMod.Utils.dll"
-        };
-        
-        int net35Found = 0;
-        for (String fileName : net35Files) {
-            File file = new File(net35Dir, fileName);
-            boolean exists = file.exists() && file.length() > 0;
-            diagnostic.append("  ").append(exists ? "✅" : "❌").append(" ").append(fileName);
-            if (exists) {
-                net35Found++;
-                diagnostic.append(" (").append(FileUtils.formatFileSize(file.length())).append(")");
-            }
-            diagnostic.append("\n");
-        }
-        diagnostic.append("NET35 Score: ").append(net35Found).append("/").append(net35Files.length).append("\n\n");
-        
-        // Check Dependencies
-        diagnostic.append("🔸 DEPENDENCY FILES:\n");
-        File supportModulesDir = new File(depsDir, "SupportModules");
-        File assemblyGenDir = new File(depsDir, "Il2CppAssemblyGenerator");
-        
-        diagnostic.append("Support Modules Dir: ").append(checkDirectory(supportModulesDir)).append("\n");
-        diagnostic.append("Assembly Generator Dir: ").append(checkDirectory(assemblyGenDir)).append("\n");
-        
-        // List actual files found
-        diagnostic.append("\n📋 FILES FOUND:\n");
-        if (melonLoaderDir.exists()) {
-            diagnostic.append(listDirectoryContents(melonLoaderDir, ""));
-        } else {
-            diagnostic.append("MelonLoader directory doesn't exist!\n");
-        }
-        
-        // Generate recommendations
-        diagnostic.append("\n💡 RECOMMENDATIONS:\n");
-        if (net8Found == 0 && net35Found == 0) {
-            diagnostic.append("❌ NO RUNTIME FILES FOUND!\n");
-            diagnostic.append("SOLUTION: You need to install MelonLoader files.\n");
-            diagnostic.append("Options:\n");
-            diagnostic.append("1. Use 'Automated Installation' in Setup Guide\n");
-            diagnostic.append("2. Manually download and extract MelonLoader files\n");
-            diagnostic.append("3. Use the APK patcher to inject loader\n\n");
-        } else if (net8Found > 0) {
-            diagnostic.append("✅ Some NET8 files found, but incomplete installation\n");
-            diagnostic.append("Missing files need to be added to: ").append(net8Dir.getAbsolutePath()).append("\n\n");
-        } else if (net35Found > 0) {
-            diagnostic.append("✅ Some NET35 files found, but incomplete installation\n");
-            diagnostic.append("Missing files need to be added to: ").append(net35Dir.getAbsolutePath()).append("\n\n");
-        }
-        
-        // Check if automated installation would work
-        diagnostic.append("🌐 INTERNET CONNECTIVITY: ");
-        if (OnlineInstaller.isOnlineInstallationAvailable()) {
-            diagnostic.append("✅ Available - Automated installation possible\n");
-            diagnostic.append("RECOMMENDED: Use 'Automated Installation' for easiest setup\n");
-        } else {
-            diagnostic.append("❌ Not available - Manual installation required\n");
-            diagnostic.append("REQUIRED: Download MelonLoader files manually\n");
-        }
-        
-        return diagnostic.toString();
-    }
-    
-    private static String checkDirectory(File dir) {
-        if (dir == null) return "❌ null";
-        if (!dir.exists()) return "❌ doesn't exist (" + dir.getAbsolutePath() + ")";
-        if (!dir.isDirectory()) return "❌ not a directory";
-        
-        File[] files = dir.listFiles();
-        int fileCount = files != null ? files.length : 0;
-        return "✅ exists (" + fileCount + " items)";
-    }
-    
-    private static String listDirectoryContents(File dir, String indent) {
-        StringBuilder contents = new StringBuilder();
-        if (dir == null || !dir.exists() || !dir.isDirectory()) {
-            return contents.toString();
-        }
-        
-        File[] files = dir.listFiles();
-        if (files == null || files.length == 0) {
-            contents.append(indent).append("(empty)\n");
-            return contents.toString();
-        }
-        
-        for (File file : files) {
-            contents.append(indent);
-            if (file.isDirectory()) {
-                contents.append("📁 ").append(file.getName()).append("/\n");
-                if (indent.length() < 8) { // Limit recursion depth
-                    contents.append(listDirectoryContents(file, indent + "  "));
-                }
-            } else {
-                contents.append("📄 ").append(file.getName());
-                contents.append(" (").append(FileUtils.formatFileSize(file.length())).append(")\n");
-            }
-        }
-        
-        return contents.toString();
-    }
-    
-    // Quick fix suggestions
-    public static String getQuickFixSuggestions(Context context, String gamePackage) {
-        StringBuilder suggestions = new StringBuilder();
-        suggestions.append("🚀 QUICK FIX OPTIONS:\n\n");
-        
-        suggestions.append("1. AUTOMATED INSTALLATION (Recommended):\n");
-        suggestions.append("   • Go to 'MelonLoader Setup Guide'\n");
-        suggestions.append("   • Choose 'Automated Online Installation'\n");
-        suggestions.append("   • Select MelonLoader or LemonLoader\n");
-        suggestions.append("   • Wait for download and extraction\n\n");
-        
-        suggestions.append("2. MANUAL INSTALLATION:\n");
-        suggestions.append("   • Download MelonLoader from GitHub\n");
-        suggestions.append("   • Extract files to correct directories\n");
-        suggestions.append("   • Follow the manual installation guide\n\n");
-        
-        suggestions.append("3. APK INJECTION:\n");
-        suggestions.append("   • Use 'APK Patcher' feature\n");
-        suggestions.append("   • Select Terraria APK\n");
-        suggestions.append("   • Inject MelonLoader into APK\n");
-        suggestions.append("   • Install modified APK\n\n");
-        
-        File baseDir = PathManager.getGameBaseDir(context, gamePackage);
-        suggestions.append("📍 TARGET DIRECTORY:\n");
-        suggestions.append(baseDir.getAbsolutePath()).append("/Loaders/MelonLoader/\n\n");
-        
-        suggestions.append("⚠️ MAKE SURE TO:\n");
-        suggestions.append("• Have stable internet connection (for automated)\n");
-        suggestions.append("• Grant file manager permissions (for manual)\n");
-        suggestions.append("• Use exact directory paths shown above\n");
-        suggestions.append("• Restart TerrariaLoader after installation\n");
-        
-        return suggestions.toString();
-    }
-}
-
---------------------------------------------------------------------------------
-/ModLoader/app/src/main/java/com/modloader/util/OfflineZipImporter.java
-
-// File: OfflineZipImporter.java - Smart ZIP Import with Auto-Detection
-// Path: /main/java/com/terrarialoader/util/OfflineZipImporter.java
-
-package com.modloader.util;
-
-import android.content.Context;
-import com.modloader.loader.MelonLoaderManager;
-import java.io.*;
-import java.util.zip.*;
-import java.util.HashSet;
-import java.util.Set;
-
-/**
- * Smart offline ZIP importer that auto-detects NET8/NET35 and extracts to correct directories
- */
-public class OfflineZipImporter {
-    
-    public static class ImportResult {
-        public boolean success;
-        public String message;
-        public MelonLoaderManager.LoaderType detectedType;
-        public int filesExtracted;
-        public String errorDetails;
-        
-        public ImportResult(boolean success, String message) {
-            this.success = success;
-            this.message = message;
-        }
-    }
-    
-    // File signatures for detection
-    private static final String[] NET8_SIGNATURES = {
-        "MelonLoader.deps.json",
-        "MelonLoader.runtimeconfig.json", 
-        "Il2CppInterop.Runtime.dll"
-    };
-    
-    private static final String[] NET35_SIGNATURES = {
-        "MelonLoader.dll",
-        "0Harmony.dll"
-    };
-    
-    private static final String[] CORE_FILES = {
-        "MelonLoader.dll",
-        "0Harmony.dll",
-        "MonoMod.RuntimeDetour.dll",
-        "MonoMod.Utils.dll"
-    };
-    
-    /**
-     * Import MelonLoader ZIP with auto-detection and smart extraction
-     */
-    public static ImportResult importMelonLoaderZip(Context context, android.net.Uri zipUri) {
-        LogUtils.logUser("🔍 Starting smart ZIP import...");
-        
-        try {
-            // Step 1: Analyze ZIP contents
-            ZipAnalysis analysis = analyzeZipContents(context, zipUri);
-            if (!analysis.isValid) {
-                return new ImportResult(false, "Invalid MelonLoader ZIP file: " + analysis.error);
-            }
-            
-            LogUtils.logUser("📋 Detected: " + analysis.detectedType.getDisplayName());
-            LogUtils.logUser("📊 Found " + analysis.totalFiles + " files to extract");
-            
-            // Step 2: Prepare target directories
-            String gamePackage = MelonLoaderManager.TERRARIA_PACKAGE;
-            if (!PathManager.initializeGameDirectories(context, gamePackage)) {
-                return new ImportResult(false, "Failed to create directory structure");
-            }
-            
-            // Step 3: Extract files to appropriate locations
-            int extractedCount = extractZipContents(context, zipUri, analysis, gamePackage);
-            
-            if (extractedCount > 0) {
-                ImportResult result = new ImportResult(true, 
-                    "Successfully imported " + analysis.detectedType.getDisplayName() + 
-                    " (" + extractedCount + " files)");
-                result.detectedType = analysis.detectedType;
-                result.filesExtracted = extractedCount;
-                
-                LogUtils.logUser("✅ ZIP import completed: " + extractedCount + " files extracted");
-                return result;
-            } else {
-                return new ImportResult(false, "No files were extracted from ZIP");
-            }
-            
-        } catch (Exception e) {
-            LogUtils.logDebug("ZIP import error: " + e.getMessage());
-            ImportResult result = new ImportResult(false, "Import failed: " + e.getMessage());
-            result.errorDetails = e.toString();
-            return result;
-        }
-    }
-    
-    /**
-     * Analyze ZIP contents to detect loader type and validate files
-     */
-    private static ZipAnalysis analyzeZipContents(Context context, android.net.Uri zipUri) {
-        ZipAnalysis analysis = new ZipAnalysis();
-        
-        try (InputStream inputStream = context.getContentResolver().openInputStream(zipUri);
-             ZipInputStream zis = new ZipInputStream(new BufferedInputStream(inputStream))) {
-            
-            ZipEntry entry;
-            Set<String> foundFiles = new HashSet<>();
-            
-            while ((entry = zis.getNextEntry()) != null) {
-                if (entry.isDirectory()) {
-                    zis.closeEntry();
-                    continue;
-                }
-                
-                String fileName = getCleanFileName(entry.getName());
-                foundFiles.add(fileName.toLowerCase());
-                analysis.totalFiles++;
-                
-                // Check for type indicators
-                for (String signature : NET8_SIGNATURES) {
-                    if (fileName.equalsIgnoreCase(signature)) {
-                        analysis.hasNet8Indicators = true;
-                        break;
-                    }
-                }
-                
-                for (String signature : NET35_SIGNATURES) {
-                    if (fileName.equalsIgnoreCase(signature)) {
-                        analysis.hasNet35Indicators = true;
-                        break;
-                    }
-                }
-                
-                zis.closeEntry();
-            }
-            
-            // Determine loader type
-            if (analysis.hasNet8Indicators) {
-                analysis.detectedType = MelonLoaderManager.LoaderType.MELONLOADER_NET8;
-            } else if (analysis.hasNet35Indicators) {
-                analysis.detectedType = MelonLoaderManager.LoaderType.MELONLOADER_NET35;
-            } else {
-                // Fallback: check for core files and default to NET8
-                boolean hasCoreFiles = false;
-                for (String coreFile : CORE_FILES) {
-                    if (foundFiles.contains(coreFile.toLowerCase())) {
-                        hasCoreFiles = true;
-                        break;
-                    }
-                }
-                
-                if (hasCoreFiles) {
-                    analysis.detectedType = MelonLoaderManager.LoaderType.MELONLOADER_NET8; // Default
-                    LogUtils.logUser("⚠️ Auto-detected as MelonLoader (default)");
-                } else {
-                    analysis.isValid = false;
-                    analysis.error = "No MelonLoader files detected in ZIP";
-                    return analysis;
-                }
-            }
-            
-            // Validate we have minimum required files
-            int coreFilesFound = 0;
-            for (String coreFile : CORE_FILES) {
-                if (foundFiles.contains(coreFile.toLowerCase())) {
-                    coreFilesFound++;
-                }
-            }
-            
-            if (coreFilesFound < 2) { // At least 2 core files required
-                analysis.isValid = false;
-                analysis.error = "Insufficient MelonLoader core files (" + coreFilesFound + "/4)";
-                return analysis;
-            }
-            
-            analysis.isValid = true;
-            LogUtils.logDebug("ZIP analysis complete - Type: " + analysis.detectedType.getDisplayName() + 
-                            ", Files: " + analysis.totalFiles);
-            
-        } catch (Exception e) {
-            analysis.isValid = false;
-            analysis.error = "ZIP analysis failed: " + e.getMessage();
-            LogUtils.logDebug("ZIP analysis error: " + e.getMessage());
-        }
-        
-        return analysis;
-    }
-    
-    /**
-     * Extract ZIP contents to appropriate directories based on detected type
-     */
-    private static int extractZipContents(Context context, android.net.Uri zipUri, ZipAnalysis analysis, String gamePackage) throws IOException {
-        int extractedCount = 0;
-        
-        // Get target directories
-        File net8Dir = PathManager.getMelonLoaderNet8Dir(context, gamePackage);
-        File net35Dir = PathManager.getMelonLoaderNet35Dir(context, gamePackage);
-        File depsDir = PathManager.getMelonLoaderDependenciesDir(context, gamePackage);
-        
-        // Ensure directories exist
-        PathManager.ensureDirectoryExists(net8Dir);
-        PathManager.ensureDirectoryExists(net35Dir);
-        PathManager.ensureDirectoryExists(depsDir);
-        PathManager.ensureDirectoryExists(new File(depsDir, "SupportModules"));
-        PathManager.ensureDirectoryExists(new File(depsDir, "CompatibilityLayers"));
-        PathManager.ensureDirectoryExists(new File(depsDir, "Il2CppAssemblyGenerator"));
-        
-        try (InputStream inputStream = context.getContentResolver().openInputStream(zipUri);
-             ZipInputStream zis = new ZipInputStream(new BufferedInputStream(inputStream))) {
-            
-            ZipEntry entry;
-            byte[] buffer = new byte[8192];
-            
-            while ((entry = zis.getNextEntry()) != null) {
-                if (entry.isDirectory()) {
-                    zis.closeEntry();
-                    continue;
-                }
-                
-                String fileName = getCleanFileName(entry.getName());
-                File targetFile = determineTargetFile(fileName, analysis.detectedType, net8Dir, net35Dir, depsDir);
-                
-                if (targetFile != null) {
-                    // Ensure parent directory exists
-                    targetFile.getParentFile().mkdirs();
-                    
-                    // Extract file
-                    try (FileOutputStream fos = new FileOutputStream(targetFile)) {
-                        int len;
-                        while ((len = zis.read(buffer)) > 0) {
-                            fos.write(buffer, 0, len);
-                        }
-                    }
-                    
-                    extractedCount++;
-                    LogUtils.logDebug("Extracted: " + fileName + " -> " + targetFile.getAbsolutePath());
-                } else {
-                    LogUtils.logDebug("Skipped: " + fileName + " (not needed)");
-                }
-                
-                zis.closeEntry();
-            }
-        }
-        
-        return extractedCount;
-    }
-    
-    /**
-     * Determine target file location based on file type and loader type
-     */
-    private static File determineTargetFile(String fileName, MelonLoaderManager.LoaderType loaderType, 
-                                          File net8Dir, File net35Dir, File depsDir) {
-        String lowerName = fileName.toLowerCase();
-        
-        // Skip non-relevant files
-        if (!isRelevantFile(fileName)) {
-            return null;
-        }
-        
-        // Core runtime files
-        if (isCoreRuntimeFile(fileName)) {
-            if (loaderType == MelonLoaderManager.LoaderType.MELONLOADER_NET8) {
-                return new File(net8Dir, fileName);
-            } else {
-                return new File(net35Dir, fileName);
-            }
-        }
-        
-        // Dependency files
-        if (lowerName.contains("il2cpp") || lowerName.contains("interop")) {
-            return new File(depsDir, "SupportModules/" + fileName);
-        }
-        
-        if (lowerName.contains("unity") || lowerName.contains("assemblygenerator")) {
-            return new File(depsDir, "Il2CppAssemblyGenerator/" + fileName);
-        }
-        
-        if (lowerName.contains("compat")) {
-            return new File(depsDir, "CompatibilityLayers/" + fileName);
-        }
-        
-        // Default: place DLLs in appropriate runtime directory
-        if (lowerName.endsWith(".dll")) {
-            if (loaderType == MelonLoaderManager.LoaderType.MELONLOADER_NET8) {
-                return new File(net8Dir, fileName);
-            } else {
-                return new File(net35Dir, fileName);
-            }
-        }
-        
-        // Config files go to runtime directory
-        if (lowerName.endsWith(".json") || lowerName.endsWith(".xml")) {
-            if (loaderType == MelonLoaderManager.LoaderType.MELONLOADER_NET8) {
-                return new File(net8Dir, fileName);
-            } else {
-                return new File(net35Dir, fileName);
-            }
-        }
-        
-        return null; // Skip unknown files
-    }
-    
-    private static String getCleanFileName(String entryName) {
-        // Remove directory paths and get just the filename
-        String fileName = entryName;
-        
-        // Handle both forward and backward slashes
-        int lastSlash = Math.max(fileName.lastIndexOf('/'), fileName.lastIndexOf('\\'));
-        if (lastSlash >= 0) {
-            fileName = fileName.substring(lastSlash + 1);
-        }
-        
-        return fileName;
-    }
-    
-    private static boolean isRelevantFile(String fileName) {
-        String lowerName = fileName.toLowerCase();
-        return lowerName.endsWith(".dll") || 
-               lowerName.endsWith(".json") || 
-               lowerName.endsWith(".xml") ||
-               lowerName.endsWith(".pdb");
-    }
-    
-    private static boolean isCoreRuntimeFile(String fileName) {
-        String lowerName = fileName.toLowerCase();
-        for (String coreFile : CORE_FILES) {
-            if (lowerName.equals(coreFile.toLowerCase())) {
-                return true;
-            }
-        }
-        return lowerName.contains("melonloader") || 
-               lowerName.contains("runtimeconfig") ||
-               lowerName.contains("deps.json");
-    }
-    
-    /**
-     * Helper class to store ZIP analysis results
-     */
-    private static class ZipAnalysis {
-        boolean isValid = false;
-        String error = "";
-        MelonLoaderManager.LoaderType detectedType;
-        boolean hasNet8Indicators = false;
-        boolean hasNet35Indicators = false;
-        int totalFiles = 0;
-    }
-}
-
---------------------------------------------------------------------------------
