@@ -1,6 +1,4 @@
-
-
-/ModLoader/app/src/main/java/com/modloader/ui/LogViewerActivity.java
+/storage/emulated/0/AndroidIDEProjects/ModLoader/ModLoader/app/src/main/java/com/modloader/ui/LogViewerActivity.java
 
 // File: LogViewerActivity.java (FIXED) - Complete Enhanced Log Viewer with Persistent Settings
 // Path: /app/src/main/java/com/modloader/ui/LogViewerActivity.java
@@ -599,7 +597,7 @@ public class LogViewerActivity extends AppCompatActivity {
             File exportFile = new File(exportDir, "terraria_logs_" + timestamp + ".txt");
             
             try (FileWriter writer = new FileWriter(exportFile)) {
-                writer.write("=== TerrariaLoader Log Export ===\n");
+                writer.write("=== ModLoader Log Export ===\n");
                 writer.write("Exported: " + new Date().toString() + "\n");
                 writer.write("Total Entries: " + allLogEntries.size() + "\n");
                 writer.write("Filtered Entries: " + filteredLogEntries.size() + "\n");
@@ -699,8 +697,7 @@ public class LogViewerActivity extends AppCompatActivity {
     }
 }
 
-
-/ModLoader/app/src/main/java/com/modloader/ui/LogViewerEnhancedActivity.java
+/storage/emulated/0/AndroidIDEProjects/ModLoader/ModLoader/app/src/main/java/com/modloader/ui/LogViewerEnhancedActivity.java
 
 // File: LogViewerEnhancedActivity.java - Enhanced log viewer with filtering and search
 // Path: /app/src/main/java/com/modloader/ui/LogViewerEnhancedActivity.java
@@ -1037,7 +1034,7 @@ public class LogViewerEnhancedActivity extends AppCompatActivity {
                 // Share the bundle
                 Intent shareIntent = new Intent(Intent.ACTION_SEND);
                 shareIntent.setType("application/zip");
-                shareIntent.putExtra(Intent.EXTRA_SUBJECT, "TerrariaLoader Diagnostic Bundle");
+                shareIntent.putExtra(Intent.EXTRA_SUBJECT, "ModLoader Diagnostic Bundle");
                 shareIntent.putExtra(Intent.EXTRA_TEXT, "Diagnostic bundle created on " + new java.util.Date().toString());
                 
                 // Use FileProvider to share the file
@@ -1132,8 +1129,7 @@ public class LogViewerEnhancedActivity extends AppCompatActivity {
     }
 }
 
-
-/ModLoader/app/src/main/java/com/modloader/ui/ModListActivity.java
+/storage/emulated/0/AndroidIDEProjects/ModLoader/ModLoader/app/src/main/java/com/modloader/ui/ModListActivity.java
 
 package com.modloader.ui;
 
@@ -1292,11 +1288,10 @@ public class ModListActivity extends AppCompatActivity {
 }
 
 
-
-/ModLoader/app/src/main/java/com/modloader/ui/ModListAdapter.java
+/storage/emulated/0/AndroidIDEProjects/ModLoader/ModLoader/app/src/main/java/com/modloader/ui/ModListAdapter.java
 
 // File: ModListAdapter.java (Fixed Adapter Class) - NullPointerException Fix
-// Path: /storage/emulated/0/AndroidIDEProjects/TerrariaML/app/src/main/java/com/terrarialoader/ui/ModListAdapter.java
+// Path: /storage/emulated/0/AndroidIDEProjects/TerrariaML/app/src/main/java/com/modloader/ui/ModListAdapter.java
 
 package com.modloader.ui;
 
@@ -1461,11 +1456,10 @@ public class ModListAdapter extends RecyclerView.Adapter<ModListAdapter.ModViewH
 }
 
 
-
-/ModLoader/app/src/main/java/com/modloader/ui/ModManagementActivity.java
+/storage/emulated/0/AndroidIDEProjects/ModLoader/ModLoader/app/src/main/java/com/modloader/ui/ModManagementActivity.java
 
 // File: ModManagementActivity.java - Pure Mod Management (Post-Installation)
-// Path: /main/java/com/terrarialoader/ui/ModManagementActivity.java
+// Path: /main/java/com/modloader/ui/ModManagementActivity.java
 
 package com.modloader.ui;
 
@@ -1707,7 +1701,7 @@ public class ModManagementActivity extends AppCompatActivity {
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setTitle("📥 Install DEX/JAR Mod");
         builder.setMessage("Install '" + filename + "' as a DEX/JAR mod?\n\n" +
-                          "This mod will be loaded directly by TerrariaLoader.");
+                          "This mod will be loaded directly by ModLoader.");
         
         builder.setPositiveButton("Install", (dialog, which) -> {
             boolean success = ModInstaller.installMod(this, uri, filename);
@@ -1759,11 +1753,10 @@ public class ModManagementActivity extends AppCompatActivity {
     }
 }
 
-
-/ModLoader/app/src/main/java/com/modloader/ui/OfflineDiagnosticActivity.java
+/storage/emulated/0/AndroidIDEProjects/ModLoader/ModLoader/app/src/main/java/com/modloader/ui/OfflineDiagnosticActivity.java
 
 // File: OfflineDiagnosticActivity.java (Part 1 - Main Class)
-// Path: /main/java/com/terrarialoader/ui/OfflineDiagnosticActivity.java
+// Path: /main/java/com/modloader/ui/OfflineDiagnosticActivity.java
 
 package com.modloader.ui;
 
@@ -1869,7 +1862,7 @@ public class OfflineDiagnosticActivity extends AppCompatActivity {
         AsyncTask.execute(() -> {
             try {
                 StringBuilder results = new StringBuilder();
-                results.append("=== TerrariaLoader Comprehensive Diagnostic ===\n");
+                results.append("=== ModLoader Comprehensive Diagnostic ===\n");
                 results.append("Timestamp: ").append(new java.util.Date().toString()).append("\n");
                 results.append("Device: ").append(android.os.Build.MANUFACTURER).append(" ")
                        .append(android.os.Build.MODEL).append("\n");
@@ -2141,7 +2134,7 @@ public class OfflineDiagnosticActivity extends AppCompatActivity {
         try {
             // Check app preferences
             android.content.SharedPreferences prefs = 
-                getSharedPreferences("TerrariaLoaderPrefs", MODE_PRIVATE);
+                getSharedPreferences("ModLoaderPrefs", MODE_PRIVATE);
             
             // Test write operation
             android.content.SharedPreferences.Editor editor = prefs.edit();
@@ -2309,7 +2302,7 @@ public class OfflineDiagnosticActivity extends AppCompatActivity {
             result.append(unknownSources ? "✅" : "❌").append(" Unknown sources enabled\n");
             
             if (!unknownSources) {
-                result.append("   📋 Fix: Settings > Apps > TerrariaLoader > Install unknown apps\n");
+                result.append("   📋 Fix: Settings > Apps > ModLoader > Install unknown apps\n");
             }
             
             File dataDir = getDataDir();
@@ -2584,7 +2577,7 @@ public class OfflineDiagnosticActivity extends AppCompatActivity {
     private boolean repairSettings() {
         try {
             // Clear all shared preferences and recreate
-            String[] prefFiles = {"TerrariaLoaderPrefs", "LogViewerPrefs", "AppSettings"};
+            String[] prefFiles = {"ModLoaderPrefs", "LogViewerPrefs", "AppSettings"};
             
             for (String prefFile : prefFiles) {
                 android.content.SharedPreferences prefs = getSharedPreferences(prefFile, MODE_PRIVATE);
@@ -2596,7 +2589,7 @@ public class OfflineDiagnosticActivity extends AppCompatActivity {
             }
             
             // Test write after clear
-            android.content.SharedPreferences testPrefs = getSharedPreferences("TerrariaLoaderPrefs", MODE_PRIVATE);
+            android.content.SharedPreferences testPrefs = getSharedPreferences("ModLoaderPrefs", MODE_PRIVATE);
             android.content.SharedPreferences.Editor testEditor = testPrefs.edit();
             testEditor.putBoolean("settings_repaired", true);
             return testEditor.commit();
@@ -2645,7 +2638,7 @@ public class OfflineDiagnosticActivity extends AppCompatActivity {
             try (FileWriter writer = new FileWriter(reportFile)) {
                 writer.write(reportContent);
                 writer.write("\n\n=== Export Info ===\n");
-                writer.write("Exported by: TerrariaLoader Diagnostic Tool\n");
+                writer.write("Exported by: ModLoader Diagnostic Tool\n");
                 writer.write("Export time: " + new java.util.Date().toString() + "\n");
             }
             
@@ -2682,7 +2675,7 @@ public class OfflineDiagnosticActivity extends AppCompatActivity {
     
     private void clearAllSettings() {
         try {
-            String[] prefFiles = {"TerrariaLoaderPrefs", "LogViewerPrefs", "AppSettings"};
+            String[] prefFiles = {"ModLoaderPrefs", "LogViewerPrefs", "AppSettings"};
             for (String prefFile : prefFiles) {
                 getSharedPreferences(prefFile, MODE_PRIVATE).edit().clear().commit();
             }
@@ -2695,9 +2688,9 @@ public class OfflineDiagnosticActivity extends AppCompatActivity {
     private void showResetAppDataInfo() {
         new AlertDialog.Builder(this)
             .setTitle("Reset App Data")
-            .setMessage("To completely reset TerrariaLoader:\n\n" +
+            .setMessage("To completely reset ModLoader:\n\n" +
                        "1. Go to Android Settings\n" +
-                       "2. Apps > TerrariaLoader\n" +
+                       "2. Apps > ModLoader\n" +
                        "3. Storage > Clear Data\n\n" +
                        "This will fix persistent settings issues.")
             .setPositiveButton("OK", null)
@@ -2741,8 +2734,7 @@ public class OfflineDiagnosticActivity extends AppCompatActivity {
 }
 
 
-
-/ModLoader/app/src/main/java/com/modloader/ui/PluginConfigActivity.java
+/storage/emulated/0/AndroidIDEProjects/ModLoader/ModLoader/app/src/main/java/com/modloader/ui/PluginConfigActivity.java
 
 // File: PluginConfigActivity.java - Plugin Configuration UI (150+ lines)
 // Path: /app/src/main/java/com/modloader/ui/PluginConfigActivity.java
@@ -3271,8 +3263,7 @@ public class PluginConfigActivity extends AppCompatActivity {
     }
 }
 
-
-/ModLoader/app/src/main/java/com/modloader/ui/PluginInstallActivity.java
+/storage/emulated/0/AndroidIDEProjects/ModLoader/ModLoader/app/src/main/java/com/modloader/ui/PluginInstallActivity.java
 
 // File: PluginInstallActivity.java - Plugin Installation UI (200+ lines)
 // Path: /app/src/main/java/com/modloader/ui/PluginInstallActivity.java
@@ -3802,8 +3793,7 @@ public class PluginInstallActivity extends AppCompatActivity {
     }
 }
 
-
-/ModLoader/app/src/main/java/com/modloader/ui/PluginManagementActivity.java
+/storage/emulated/0/AndroidIDEProjects/ModLoader/ModLoader/app/src/main/java/com/modloader/ui/PluginManagementActivity.java
 
 // File: PluginManagementActivity.java - Plugin Management UI (350+ lines)
 // Path: /app/src/main/java/com/modloader/ui/PluginManagementActivity.java
@@ -4467,11 +4457,10 @@ public class PluginManagementActivity extends AppCompatActivity {
     }
 }
 
-
-/ModLoader/app/src/main/java/com/modloader/ui/SettingsActivity.java
+/storage/emulated/0/AndroidIDEProjects/ModLoader/ModLoader/app/src/main/java/com/modloader/ui/SettingsActivity.java
 
 // File: SettingsActivity.java (Enhanced UI with Operation Modes)
-// Path: /app/src/main/java/com/terrarialoader/ui/SettingsActivity.java
+// Path: /app/src/main/java/com/modloader/ui/SettingsActivity.java
 
 package com.modloader.ui;
 
@@ -5071,11 +5060,10 @@ public class SettingsActivity extends AppCompatActivity {
     }
 }
 
-
-/ModLoader/app/src/main/java/com/modloader/ui/SetupGuideActivity.java
+/storage/emulated/0/AndroidIDEProjects/ModLoader/ModLoader/app/src/main/java/com/modloader/ui/SetupGuideActivity.java
 
 // File: SetupGuideActivity.java (Updated) - Added Offline ZIP Import
-// Path: /storage/emulated/0/AndroidIDEProjects/TerrariaML/app/src/main/java/com/terrarialoader/ui/SetupGuideActivity.java
+// Path: /storage/emulated/0/AndroidIDEProjects/TerrariaML/app/src/main/java/com/modloader/ui/SetupGuideActivity.java
 
 package com.modloader.ui;
 
@@ -5363,8 +5351,7 @@ public class SetupGuideActivity extends AppCompatActivity {
     }
 }
 
-
-/ModLoader/app/src/main/java/com/modloader/ui/UnifiedLoaderActivity.java
+/storage/emulated/0/AndroidIDEProjects/ModLoader/ModLoader/app/src/main/java/com/modloader/ui/UnifiedLoaderActivity.java
 
 // File: UnifiedLoaderActivity.java - Complete Fixed Version
 // Path: /main/java/com/modloader/ui/UnifiedLoaderActivity.java
@@ -5974,8 +5961,7 @@ public class UnifiedLoaderActivity extends AppCompatActivity implements
     }
 }
 
-
-/ModLoader/app/src/main/java/com/modloader/ui/UnifiedLoaderController.java
+/storage/emulated/0/AndroidIDEProjects/ModLoader/ModLoader/app/src/main/java/com/modloader/ui/UnifiedLoaderController.java
 
 // File: UnifiedLoaderController.java - Fixed step progression for offline ZIP import
 // Path: /app/src/main/java/com/modloader/ui/UnifiedLoaderController.java
@@ -6679,8 +6665,7 @@ public class UnifiedLoaderController {
 }
   
 
-
-/ModLoader/app/src/main/java/com/modloader/ui/UnifiedLoaderListener.java
+/storage/emulated/0/AndroidIDEProjects/ModLoader/ModLoader/app/src/main/java/com/modloader/ui/UnifiedLoaderListener.java
 
 // File: UnifiedLoaderListener.java - Missing interface for UnifiedLoaderActivity
 // Path: /app/src/main/java/com/modloader/ui/UnifiedLoaderListener.java
@@ -6742,11 +6727,10 @@ public interface UnifiedLoaderListener {
     void onLogMessage(String message, UnifiedLoaderController.LogLevel level);
 }
 
-
-/ModLoader/app/src/main/java/com/modloader/util/ApkInstaller.java
+/storage/emulated/0/AndroidIDEProjects/ModLoader/ModLoader/app/src/main/java/com/modloader/util/ApkInstaller.java
 
 // File: ApkInstaller.java (FIXED) - Enhanced APK Installation with Proper Error Handling
-// Path: /main/java/com/terrarialoader/util/ApkInstaller.java
+// Path: /main/java/com/modloader/util/ApkInstaller.java
 
 package com.modloader.util;
 
@@ -6982,7 +6966,7 @@ public class ApkInstaller {
                            "Steps:\n" +
                            "1. Tap 'Grant Permission'\n" +
                            "2. Enable 'Allow from this source'\n" +
-                           "3. Return to TerrariaLoader\n" +
+                           "3. Return to ModLoader\n" +
                            "4. Try installing again")
                 .setPositiveButton("Grant Permission", (dialog, which) -> {
                     Intent intent = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES);
@@ -7008,7 +6992,7 @@ public class ApkInstaller {
                            "Steps:\n" +
                            "1. Tap 'Open Settings'\n" +
                            "2. Find 'Unknown sources' and enable it\n" +
-                           "3. Return to TerrariaLoader\n" +
+                           "3. Return to ModLoader\n" +
                            "4. Try installing again")
                 .setPositiveButton("Open Settings", (dialog, which) -> {
                     try {
@@ -7255,11 +7239,10 @@ public class ApkInstaller {
     }
 }
 
-
-/ModLoader/app/src/main/java/com/modloader/util/ApkPatcher.java
+/storage/emulated/0/AndroidIDEProjects/ModLoader/ModLoader/app/src/main/java/com/modloader/util/ApkPatcher.java
 
 // File: ApkPatcher.java - Enhanced APK patching with real MelonLoader injection
-// Path: app/src/main/java/com/terrarialoader/util/ApkPatcher.java
+// Path: app/src/main/java/com/modloader/util/ApkPatcher.java
 
 package com.modloader.util;
 
@@ -7828,7 +7811,7 @@ public class ApkPatcher {
             // Create version info
             String versionInfo = "MelonLoader Type: " + loaderType.getDisplayName() + "\n" +
                                "Patch Date: " + new java.util.Date().toString() + "\n" +
-                               "TerrariaLoader Version: 1.0\n";
+                               "ModLoader Version: 1.0\n";
             injectTextFile(zos, "assets/MelonLoaderVersion.txt", versionInfo);
             result.addedFiles++;
             result.injectedFiles.add("assets/MelonLoaderVersion.txt");
@@ -7978,8 +7961,7 @@ public class ApkPatcher {
     }
 }
 
-
-/ModLoader/app/src/main/java/com/modloader/util/ApkValidator.java
+/storage/emulated/0/AndroidIDEProjects/ModLoader/ModLoader/app/src/main/java/com/modloader/util/ApkValidator.java
 
 package com.modloader.util;
 
@@ -8170,11 +8152,10 @@ public class ApkValidator {
     }
 }
 
-
-/ModLoader/app/src/main/java/com/modloader/util/DiagnosticBundleExporter.java
+/storage/emulated/0/AndroidIDEProjects/ModLoader/ModLoader/app/src/main/java/com/modloader/util/DiagnosticBundleExporter.java
 
 // File: DiagnosticBundleExporter.java - Comprehensive Support Bundle Creator
-// Path: /main/java/com/terrarialoader/util/DiagnosticBundleExporter.java
+// Path: /main/java/com/modloader/util/DiagnosticBundleExporter.java
 
 package com.modloader.util;
 
@@ -8198,7 +8179,7 @@ import java.util.zip.ZipOutputStream;
  */
 public class DiagnosticBundleExporter {
     
-    private static final String BUNDLE_NAME_FORMAT = "TerrariaLoader_Diagnostic_%s.zip";
+    private static final String BUNDLE_NAME_FORMAT = "ModLoader_Diagnostic_%s.zip";
     private static final SimpleDateFormat TIMESTAMP_FORMAT = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault());
     
     /**
@@ -8720,11 +8701,10 @@ public class DiagnosticBundleExporter {
     }
 }
 
-
-/ModLoader/app/src/main/java/com/modloader/util/Downloader.java
+/storage/emulated/0/AndroidIDEProjects/ModLoader/ModLoader/app/src/main/java/com/modloader/util/Downloader.java
 
 // File: Downloader.java (Fixed Utility Class)
-// Path: /storage/emulated/0/AndroidIDEProjects/TerrariaML/app/src/main/java/com/terrarialoader/util/Downloader.java
+// Path: /storage/emulated/0/AndroidIDEProjects/TerrariaML/app/src/main/java/com/modloader/util/Downloader.java
 
 package com.modloader.util;
 
@@ -8909,3 +8889,4 @@ public class Downloader {
         return "net8/" + fileName;
     }
 }
+
