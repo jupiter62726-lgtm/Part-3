@@ -1,420 +1,3 @@
-urn result;
-        }
-        
-        // Check file is readable
-        if (!apkFile.canRead()) {
-            result.errorMessage = "APK file is not readable. Check file permissions.";
-            return result;
-        }
-        
-        // Check file size
-        long fileSize = apkFile.length();
-        if (fileSize == 0) {
-            result.errorMessage = "APK file is empty (0 bytes).";
-            return result;
-        }
-        
-        if (fileSize < MIN_APK_SIZE) {
-            result.errorMessage = "APK file is too small (" + FileUtils.formatFileSize(fileSize) + 
-                "). Minimum size: " + FileUtils.formatFileSize(MIN_APK_SIZE);
-            return result;
-        }
-        
-        if (fileSize > MAX_APK_SIZE) {
-            result.errorMessage = "APK file is too large (" + FileUtils.formatFileSize(fileSize) + 
-                "). Maximum size: " + FileUtils.formatFileSize(MAX_APK_SIZE);
-            return result;
-        }
-        
-        // Check file extension
-        String fileName = apkFile.getName().toLowerCase();
-        if (!fileName.endsWith(".apk")) {
-            result.errorMessage = "File does not have .apk extension: " + fileName;
-            return result;
-        }
-        
-        // Check APK magic number (PK signature)
-        if (!isValidApkFile(apkFile)) {
-            result.errorMessage = "File is not a valid APK. The file may be corrupted or not an Android package.";
-            return result;
-        }
-        
-        // Try to parse APK package info
-        try {
-            String packageInfo = getApkPackageInfo(apkFile);
-            LogUtils.logDebug("APK package info: " + packageInfo);
-        } catch (Exception e) {
-            result.errorMessage = "Cannot parse APK package information. The APK may be corrupted.\n\nError: " + e.getMessage();
-            return result;
-        }
-        
-        result.isValid = true;
-        return result;
-    }
-    
-    // Check if file is a valid APK by reading ZIP signature
-    private static boolean isValidApkFile(File apkFile) {
-        try (FileInputStream fis = new FileInputStream(apkFile)) {
-            byte[] signature = new byte[4];
-            int bytesRead = fis.read(signature);
-            
-            if (bytesRead != 4) return false;
-            
-            // Check for ZIP signature (PK\003\004 or PK\005\006 or PK\007\008)
-            return (signature[0] == 0x50 && signature[1] == 0x4B && 
-                   (signature[2] == 0x03 || signature[2] == 0x05 || signature[2] == 0x07));
-                   
-        } catch (Exception e) {
-            LogUtils.logDebug("Error checking APK signature: " + e.getMessage());
-            return false;
-        }
-    }
-    
-    // Get basic APK package information
-    private static String getApkPackageInfo(File apkFile) throws Exception {
-        try (ZipInputStream zis = new ZipInputStream(new FileInputStream(apkFile))) {
-            ZipEntry entry;
-            boolean hasManifest = false;
-            boolean hasDexFile = false;
-            int entryCount = 0;
-            
-            while ((entry = zis.getNextEntry()) != null && entryCount < 100) {
-                String entryName = entry.getName();
-                
-                if ("AndroidManifest.xml".equals(entryName)) {
-                    hasManifest = true;
-                }
-                
-                if (entryName.endsWith(".dex")) {
-                    hasDexFile = true;
-                }
-                
-                entryCount++;
-            }
-            
-            if (!hasManifest) {
-                throw new Exception("APK missing AndroidManifest.xml");
-            }
-            
-            if (!hasDexFile) {
-                throw new Exception("APK missing .dex files");
-            }
-            
-            return String.format("Valid APK with %d entries, manifest: %s, dex files: %s", 
-                entryCount, hasManifest, hasDexFile);
-        }
-    }
-    
-    // Check install permissions
-    private static boolean checkInstallPermissions(Context context) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            return context.getPackageManager().canRequestPackageInstalls();
-        }
-        
-        // For older Android versions, check unknown sources setting
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
-            try {
-                return Settings.Secure.getInt(context.getContentResolver(), 
-                    Settings.Secure.INSTALL_NON_MARKET_APPS) == 1;
-            } catch (Settings.SettingNotFoundException e) {
-                return false;
-            }
-        }
-        
-        return true; // Assume allowed for very old versions
-    }
-    
-    // Request install permission
-    private static void requestInstallPermission(Context context) {
-        if (!(context instanceof Activity)) {
-            LogUtils.logError("Context is not an Activity - cannot request permissions");
-            Toast.makeText(context, "Cannot request install permission - context is not an Activity", 
-                Toast.LENGTH_LONG).show();
-            return;
-        }
-        
-        Activity activity = (Activity) context;
-        
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            // Android 8.0+ - Request install unknown apps permission
-            new AlertDialog.Builder(activity)
-                .setTitle("🔐 Install Permission Required")
-                .setMessage("To install the modified APK, you need to allow this app to install unknown apps.\n\n" +
-                           "Steps:\n" +
-                           "1. Tap 'Grant Permission'\n" +
-                           "2. Enable 'Allow from this source'\n" +
-                           "3. Return to TerrariaLoader\n" +
-                           "4. Try installing again")
-                .setPositiveButton("Grant Permission", (dialog, which) -> {
-                    Intent intent = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES);
-                    intent.setData(Uri.parse("package:" + activity.getPackageName()));
-                    try {
-                        activity.startActivity(intent);
-                        LogUtils.logUser("Opened install permission settings");
-                    } catch (Exception e) {
-                        LogUtils.logError("Failed to open install permission settings: " + e.getMessage());
-                        Toast.makeText(activity, "Cannot open permission settings", Toast.LENGTH_SHORT).show();
-                    }
-                })
-                .setNegativeButton("Cancel", (dialog, which) -> {
-                    LogUtils.logUser("User cancelled install permission request");
-                })
-                .show();
-                
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
-            // Android 4.2-7.1 - Direct to security settings
-            new AlertDialog.Builder(activity)
-                .setTitle("🔐 Enable Unknown Sources")
-                .setMessage("To install the modified APK, you need to enable 'Unknown Sources' in security settings.\n\n" +
-                           "Steps:\n" +
-                           "1. Tap 'Open Settings'\n" +
-                           "2. Find 'Unknown sources' and enable it\n" +
-                           "3. Return to TerrariaLoader\n" +
-                           "4. Try installing again")
-                .setPositiveButton("Open Settings", (dialog, which) -> {
-                    try {
-                        Intent intent = new Intent(Settings.ACTION_SECURITY_SETTINGS);
-                        activity.startActivity(intent);
-                        LogUtils.logUser("Opened security settings for unknown sources");
-                    } catch (Exception e) {
-                        LogUtils.logError("Failed to open security settings: " + e.getMessage());
-                        Toast.makeText(activity, "Cannot open security settings", Toast.LENGTH_SHORT).show();
-                    }
-                })
-                .setNegativeButton("Cancel", null)
-                .show();
-        }
-    }
-    
-    // Prepare APK for installation (copy to accessible location)
-    private static File prepareApkForInstallation(Context context, File sourceApk) {
-        try {
-            // Create installation directory in app's external files
-            File installDir = new File(context.getExternalFilesDir(null), "apk_install");
-            if (!installDir.exists() && !installDir.mkdirs()) {
-                LogUtils.logError("Failed to create install directory");
-                return null;
-            }
-            
-            // Create target file with timestamp to avoid conflicts
-            String fileName = sourceApk.getName();
-            if (!fileName.toLowerCase().endsWith(".apk")) {
-                fileName = fileName + ".apk";
-            }
-            
-            // Add timestamp to avoid conflicts
-            String baseName = fileName.substring(0, fileName.lastIndexOf('.'));
-            String extension = fileName.substring(fileName.lastIndexOf('.'));
-            String targetFileName = baseName + "_" + System.currentTimeMillis() + extension;
-            
-            File targetApk = new File(installDir, targetFileName);
-            
-            // Copy APK to accessible location
-            if (!FileUtils.copyFile(sourceApk, targetApk)) {
-                LogUtils.logError("Failed to copy APK to install directory");
-                return null;
-            }
-            
-            // Set file permissions
-            if (!targetApk.setReadable(true, false)) {
-                LogUtils.logDebug("Warning: Could not set APK as readable");
-            }
-            
-            LogUtils.logUser("✅ APK prepared for installation: " + targetApk.getName());
-            LogUtils.logDebug("Target APK path: " + targetApk.getAbsolutePath());
-            
-            return targetApk;
-            
-        } catch (Exception e) {
-            LogUtils.logError("Error preparing APK: " + e.getMessage());
-            return null;
-        }
-    }
-    
-    // Launch the actual installation intent
-    private static void launchInstallationIntent(Context context, File apkFile) {
-        try {
-            Intent installIntent = new Intent(Intent.ACTION_VIEW);
-            installIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            
-            Uri apkUri;
-            
-            // Use FileProvider for Android 7.0+
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                apkUri = FileProvider.getUriForFile(context, 
-                    context.getPackageName() + ".provider", apkFile);
-                LogUtils.logDebug("Using FileProvider URI: " + apkUri);
-            } else {
-                apkUri = Uri.fromFile(apkFile);
-                LogUtils.logDebug("Using direct file URI: " + apkUri);
-            }
-            
-            installIntent.setDataAndType(apkUri, "application/vnd.android.package-archive");
-            
-            // Verify intent can be handled
-            if (installIntent.resolveActivity(context.getPackageManager()) != null) {
-                context.startActivity(installIntent);
-                LogUtils.logUser("🚀 Installation intent launched successfully");
-                
-                // Show user guidance
-                Toast.makeText(context, 
-                    "📱 Installation dialog should appear.\nIf not, check your notification panel.", 
-                    Toast.LENGTH_LONG).show();
-                    
-            } else {
-                LogUtils.logError("No activity found to handle install intent");
-                showError(context, "Installation Error", 
-                    "No app found to handle APK installation. This shouldn't happen on Android devices.");
-            }
-            
-        } catch (Exception e) {
-            LogUtils.logError("Failed to launch install intent: " + e.getMessage());
-            showError(context, "Installation Launch Failed", 
-                "Could not start APK installation.\n\nError: " + e.getMessage() + 
-                "\n\nPossible solutions:\n• Restart the app\n• Check storage permissions\n• Try a different APK");
-        }
-    }
-    
-    // Calculate MD5 hash of APK for verification
-    public static String calculateApkHash(File apkFile) {
-        try {
-            MessageDigest md = MessageDigest.getInstance("MD5");
-            try (FileInputStream fis = new FileInputStream(apkFile)) {
-                byte[] buffer = new byte[8192];
-                int bytesRead;
-                while ((bytesRead = fis.read(buffer)) != -1) {
-                    md.update(buffer, 0, bytesRead);
-                }
-            }
-            
-            byte[] hashBytes = md.digest();
-            StringBuilder hexString = new StringBuilder();
-            for (byte b : hashBytes) {
-                String hex = Integer.toHexString(0xff & b);
-                if (hex.length() == 1) {
-                    hexString.append('0');
-                }
-                hexString.append(hex);
-            }
-            return hexString.toString().toUpperCase();
-            
-        } catch (Exception e) {
-            LogUtils.logError("Failed to calculate APK hash: " + e.getMessage());
-            return "UNKNOWN";
-        }
-    }
-    
-    // Get detailed APK information
-    public static ApkInfo getApkInfo(Context context, File apkFile) {
-        ApkInfo info = new ApkInfo();
-        info.fileName = apkFile.getName();
-        info.filePath = apkFile.getAbsolutePath();
-        info.fileSize = apkFile.length();
-        info.lastModified = apkFile.lastModified();
-        
-        try {
-            PackageManager pm = context.getPackageManager();
-            PackageInfo packageInfo = pm.getPackageArchiveInfo(apkFile.getAbsolutePath(), 0);
-            
-            if (packageInfo != null) {
-                info.packageName = packageInfo.packageName;
-                info.versionName = packageInfo.versionName;
-                info.versionCode = packageInfo.versionCode;
-                
-                // Get application label
-                packageInfo.applicationInfo.sourceDir = apkFile.getAbsolutePath();
-                packageInfo.applicationInfo.publicSourceDir = apkFile.getAbsolutePath();
-                info.appName = pm.getApplicationLabel(packageInfo.applicationInfo).toString();
-            }
-            
-        } catch (Exception e) {
-            LogUtils.logDebug("Could not extract package info: " + e.getMessage());
-        }
-        
-        info.hash = calculateApkHash(apkFile);
-        return info;
-    }
-    
-    // Clean up old installation files
-    public static void cleanupInstallFiles(Context context) {
-        try {
-            File installDir = new File(context.getExternalFilesDir(null), "apk_install");
-            if (installDir.exists() && installDir.isDirectory()) {
-                File[] files = installDir.listFiles();
-                if (files != null) {
-                    long currentTime = System.currentTimeMillis();
-                    int deletedCount = 0;
-                    
-                    for (File file : files) {
-                        // Delete files older than 1 hour
-                        if (currentTime - file.lastModified() > 3600000) {
-                            if (file.delete()) {
-                                deletedCount++;
-                            }
-                        }
-                    }
-                    
-                    if (deletedCount > 0) {
-                        LogUtils.logDebug("Cleaned up " + deletedCount + " old installation files");
-                    }
-                }
-            }
-        } catch (Exception e) {
-            LogUtils.logDebug("Error cleaning up install files: " + e.getMessage());
-        }
-    }
-    
-    // Show error dialog
-    private static void showError(Context context, String title, String message) {
-        if (context instanceof Activity) {
-            new AlertDialog.Builder(context)
-                .setTitle("❌ " + title)
-                .setMessage(message)
-                .setPositiveButton("OK", null)
-                .show();
-        } else {
-            Toast.makeText(context, title + ": " + message, Toast.LENGTH_LONG).show();
-        }
-    }
-    
-    // Validation result helper class
-    private static class ValidationResult {
-        boolean isValid = false;
-        String errorMessage = "";
-    }
-    
-    // APK information class
-    public static class ApkInfo {
-        public String fileName;
-        public String filePath;
-        public long fileSize;
-        public long lastModified;
-        public String packageName;
-        public String appName;
-        public String versionName;
-        public int versionCode;
-        public String hash;
-        
-        @Override
-        public String toString() {
-            StringBuilder sb = new StringBuilder();
-            sb.append("=== APK Information ===\n");
-            sb.append("File: ").append(fileName).append("\n");
-            sb.append("Size: ").append(FileUtils.formatFileSize(fileSize)).append("\n");
-            sb.append("Package: ").append(packageName != null ? packageName : "Unknown").append("\n");
-            sb.append("App Name: ").append(appName != null ? appName : "Unknown").append("\n");
-            sb.append("Version: ").append(versionName != null ? versionName : "Unknown");
-            if (versionCode > 0) {
-                sb.append(" (").append(versionCode).append(")");
-            }
-            sb.append("\n");
-            sb.append("Hash: ").append(hash).append("\n");
-            sb.append("Modified: ").append(new java.util.Date(lastModified).toString()).append("\n");
-            return sb.toString();
-        }
-    }
-}
 
 ================================================================================
 
@@ -9198,4 +8781,58 @@ ModLoader/app/src/main/res/layout/activity_settings_enhanced.xml
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:layout_marginStart="8dp
+                android:layout_marginStart="8dp"
+                android:text="📥 Import"
+                android:textSize="12sp"
+                android:backgroundTint="#607D8B" />
+
+        </LinearLayout>
+
+        <!-- Info Section -->
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="16dp"
+            app:cardCornerRadius="8dp"
+            app:cardElevation="2dp"
+            app:cardBackgroundColor="#E3F2FD">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="ℹ️ Tips"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="8dp"
+                    android:textColor="#1976D2" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="• Normal Mode works on all devices\n• Shizuku Mode provides enhanced access without root\n• Root Mode requires a rooted device\n• Hybrid Mode combines both enhanced methods"
+                    android:textSize="14sp"
+                    android:textColor="#1976D2" />
+
+            </LinearLayout>
+
+        </androidx.cardview.widget.CardView>
+
+        <!-- Version Info -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="TerrariaLoader v1.0 - Enhanced Edition"
+            android:textSize="12sp"
+            android:gravity="center"
+            android:layout_marginTop="16dp"
+            android:textColor="#999999" />
+
+    </LinearLayout>
+
+</ScrollView>
