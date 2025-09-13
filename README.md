@@ -1,6 +1,580 @@
+================================================================================
+ModLoader/app/src/main/java/com/modloader/ui/UnifiedLoaderListener.java
+
+// File: UnifiedLoaderListener.java - Missing interface for UnifiedLoaderActivity
+// Path: /app/src/main/java/com/modloader/ui/UnifiedLoaderListener.java
+
+package com.modloader.ui;
+
+import com.modloader.loader.MelonLoaderManager;
+
+/**
+ * Listener interface for unified loader operations
+ * Provides callbacks for installation progress and state changes
+ */
+public interface UnifiedLoaderListener {
+    
+    /**
+     * Called when installation starts
+     * @param loaderType Type of loader being installed
+     */
+    void onInstallationStarted(String loaderType);
+    
+    /**
+     * Called when installation progress updates
+     * @param message Progress message
+     */
+    void onInstallationProgress(String message);
+    
+    /**
+     * Called when installation succeeds
+     * @param loaderType Type of loader that was installed
+     * @param outputPath Path to the output
+     */
+    void onInstallationSuccess(String loaderType, String outputPath);
+    
+    /**
+     * Called when installation fails
+     * @param loaderType Type of loader that failed
+     * @param error Error message
+     */
+    void onInstallationFailed(String loaderType, String error);
+    
+    /**
+     * Called when validation completes
+     * @param isValid Whether validation passed
+     * @param message Validation message
+     */
+    void onValidationComplete(boolean isValid, String message);
+    
+    /**
+     * Called when installation state changes
+     * @param state New installation state
+     */
+    void onInstallationStateChanged(UnifiedLoaderController.InstallationState state);
+    
+    /**
+     * Called when a log message is generated
+     * @param message Log message
+     * @param level Log level
+     */
+    void onLogMessage(String message, UnifiedLoaderController.LogLevel level);
+}
 
 ================================================================================
+ModLoader/app/src/main/java/com/modloader/util/ApkInstaller.java
 
+// File: ApkInstaller.java (FIXED) - Enhanced APK Installation with Proper Error Handling
+// Path: /main/java/com/terrarialoader/util/ApkInstaller.java
+
+package com.modloader.util;
+
+import android.app.Activity;
+import android.content.Context;
+import android.content.Intent;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
+import android.net.Uri;
+import android.os.Build;
+import android.provider.Settings;
+import android.widget.Toast;
+import androidx.core.content.FileProvider;
+import androidx.appcompat.app.AlertDialog;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.security.MessageDigest;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+
+public class ApkInstaller {
+    
+    private static final String TAG = "ApkInstaller";
+    private static final int MIN_APK_SIZE = 1024 * 1024; // 1MB minimum
+    private static final int MAX_APK_SIZE = 200 * 1024 * 1024; // 200MB maximum
+    
+    // Enhanced APK installation with comprehensive error handling
+    public static void installApk(Context context, File apkFile) {
+        if (context == null) {
+            LogUtils.logError("Context is null - cannot install APK");
+            return;
+        }
+        
+        if (apkFile == null) {
+            LogUtils.logError("APK file is null - cannot install");
+            showError(context, "APK Installation Failed", 
+                "No APK file specified. Please select a valid APK file.");
+            return;
+        }
+        
+        LogUtils.logUser("🔧 Starting APK installation: " + apkFile.getName());
+        LogUtils.logDebug("APK path: " + apkFile.getAbsolutePath());
+        LogUtils.logDebug("APK size: " + FileUtils.formatFileSize(apkFile.length()));
+        
+        // Step 1: Validate APK file
+        ValidationResult validation = validateApkFile(apkFile);
+        if (!validation.isValid) {
+            LogUtils.logError("APK validation failed: " + validation.errorMessage);
+            showError(context, "Invalid APK File", validation.errorMessage);
+            return;
+        }
+        
+        // Step 2: Check permissions
+        if (!checkInstallPermissions(context)) {
+            LogUtils.logUser("Install permissions not granted - requesting permission");
+            requestInstallPermission(context);
+            return;
+        }
+        
+        // Step 3: Prepare APK for installation
+        try {
+            File preparedApk = prepareApkForInstallation(context, apkFile);
+            if (preparedApk == null) {
+                LogUtils.logError("Failed to prepare APK for installation");
+                showError(context, "Installation Preparation Failed", 
+                    "Could not prepare the APK file for installation. Check storage permissions and available space.");
+                return;
+            }
+            
+            // Step 4: Launch installation intent
+            launchInstallationIntent(context, preparedApk);
+            
+        } catch (Exception e) {
+            LogUtils.logError("APK installation error: " + e.getMessage());
+            showError(context, "Installation Error", 
+                "Failed to install APK: " + e.getMessage() + 
+                "\n\nTry:\n• Checking file permissions\n• Ensuring enough storage space\n• Restarting the app");
+        }
+    }
+    
+    // Comprehensive APK validation
+    private static ValidationResult validateApkFile(File apkFile) {
+        ValidationResult result = new ValidationResult();
+        
+        // Check file exists
+        if (!apkFile.exists()) {
+            result.errorMessage = "APK file does not exist:\n" + apkFile.getAbsolutePath();
+            return result;
+        }
+        
+        // Check file is readable
+        if (!apkFile.canRead()) {
+            result.errorMessage = "APK file is not readable. Check file permissions.";
+            return result;
+        }
+        
+        // Check file size
+        long fileSize = apkFile.length();
+        if (fileSize == 0) {
+            result.errorMessage = "APK file is empty (0 bytes).";
+            return result;
+        }
+        
+        if (fileSize < MIN_APK_SIZE) {
+            result.errorMessage = "APK file is too small (" + FileUtils.formatFileSize(fileSize) + 
+                "). Minimum size: " + FileUtils.formatFileSize(MIN_APK_SIZE);
+            return result;
+        }
+        
+        if (fileSize > MAX_APK_SIZE) {
+            result.errorMessage = "APK file is too large (" + FileUtils.formatFileSize(fileSize) + 
+                "). Maximum size: " + FileUtils.formatFileSize(MAX_APK_SIZE);
+            return result;
+        }
+        
+        // Check file extension
+        String fileName = apkFile.getName().toLowerCase();
+        if (!fileName.endsWith(".apk")) {
+            result.errorMessage = "File does not have .apk extension: " + fileName;
+            return result;
+        }
+        
+        // Check APK magic number (PK signature)
+        if (!isValidApkFile(apkFile)) {
+            result.errorMessage = "File is not a valid APK. The file may be corrupted or not an Android package.";
+            return result;
+        }
+        
+        // Try to parse APK package info
+        try {
+            String packageInfo = getApkPackageInfo(apkFile);
+            LogUtils.logDebug("APK package info: " + packageInfo);
+        } catch (Exception e) {
+            result.errorMessage = "Cannot parse APK package information. The APK may be corrupted.\n\nError: " + e.getMessage();
+            return result;
+        }
+        
+        result.isValid = true;
+        return result;
+    }
+    
+    // Check if file is a valid APK by reading ZIP signature
+    private static boolean isValidApkFile(File apkFile) {
+        try (FileInputStream fis = new FileInputStream(apkFile)) {
+            byte[] signature = new byte[4];
+            int bytesRead = fis.read(signature);
+            
+            if (bytesRead != 4) return false;
+            
+            // Check for ZIP signature (PK\003\004 or PK\005\006 or PK\007\008)
+            return (signature[0] == 0x50 && signature[1] == 0x4B && 
+                   (signature[2] == 0x03 || signature[2] == 0x05 || signature[2] == 0x07));
+                   
+        } catch (Exception e) {
+            LogUtils.logDebug("Error checking APK signature: " + e.getMessage());
+            return false;
+        }
+    }
+    
+    // Get basic APK package information
+    private static String getApkPackageInfo(File apkFile) throws Exception {
+        try (ZipInputStream zis = new ZipInputStream(new FileInputStream(apkFile))) {
+            ZipEntry entry;
+            boolean hasManifest = false;
+            boolean hasDexFile = false;
+            int entryCount = 0;
+            
+            while ((entry = zis.getNextEntry()) != null && entryCount < 100) {
+                String entryName = entry.getName();
+                
+                if ("AndroidManifest.xml".equals(entryName)) {
+                    hasManifest = true;
+                }
+                
+                if (entryName.endsWith(".dex")) {
+                    hasDexFile = true;
+                }
+                
+                entryCount++;
+            }
+            
+            if (!hasManifest) {
+                throw new Exception("APK missing AndroidManifest.xml");
+            }
+            
+            if (!hasDexFile) {
+                throw new Exception("APK missing .dex files");
+            }
+            
+            return String.format("Valid APK with %d entries, manifest: %s, dex files: %s", 
+                entryCount, hasManifest, hasDexFile);
+        }
+    }
+    
+    // Check install permissions
+    private static boolean checkInstallPermissions(Context context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            return context.getPackageManager().canRequestPackageInstalls();
+        }
+        
+        // For older Android versions, check unknown sources setting
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
+            try {
+                return Settings.Secure.getInt(context.getContentResolver(), 
+                    Settings.Secure.INSTALL_NON_MARKET_APPS) == 1;
+            } catch (Settings.SettingNotFoundException e) {
+                return false;
+            }
+        }
+        
+        return true; // Assume allowed for very old versions
+    }
+    
+    // Request install permission
+    private static void requestInstallPermission(Context context) {
+        if (!(context instanceof Activity)) {
+            LogUtils.logError("Context is not an Activity - cannot request permissions");
+            Toast.makeText(context, "Cannot request install permission - context is not an Activity", 
+                Toast.LENGTH_LONG).show();
+            return;
+        }
+        
+        Activity activity = (Activity) context;
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            // Android 8.0+ - Request install unknown apps permission
+            new AlertDialog.Builder(activity)
+                .setTitle("🔐 Install Permission Required")
+                .setMessage("To install the modified APK, you need to allow this app to install unknown apps.\n\n" +
+                           "Steps:\n" +
+                           "1. Tap 'Grant Permission'\n" +
+                           "2. Enable 'Allow from this source'\n" +
+                           "3. Return to TerrariaLoader\n" +
+                           "4. Try installing again")
+                .setPositiveButton("Grant Permission", (dialog, which) -> {
+                    Intent intent = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES);
+                    intent.setData(Uri.parse("package:" + activity.getPackageName()));
+                    try {
+                        activity.startActivity(intent);
+                        LogUtils.logUser("Opened install permission settings");
+                    } catch (Exception e) {
+                        LogUtils.logError("Failed to open install permission settings: " + e.getMessage());
+                        Toast.makeText(activity, "Cannot open permission settings", Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .setNegativeButton("Cancel", (dialog, which) -> {
+                    LogUtils.logUser("User cancelled install permission request");
+                })
+                .show();
+                
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
+            // Android 4.2-7.1 - Direct to security settings
+            new AlertDialog.Builder(activity)
+                .setTitle("🔐 Enable Unknown Sources")
+                .setMessage("To install the modified APK, you need to enable 'Unknown Sources' in security settings.\n\n" +
+                           "Steps:\n" +
+                           "1. Tap 'Open Settings'\n" +
+                           "2. Find 'Unknown sources' and enable it\n" +
+                           "3. Return to TerrariaLoader\n" +
+                           "4. Try installing again")
+                .setPositiveButton("Open Settings", (dialog, which) -> {
+                    try {
+                        Intent intent = new Intent(Settings.ACTION_SECURITY_SETTINGS);
+                        activity.startActivity(intent);
+                        LogUtils.logUser("Opened security settings for unknown sources");
+                    } catch (Exception e) {
+                        LogUtils.logError("Failed to open security settings: " + e.getMessage());
+                        Toast.makeText(activity, "Cannot open security settings", Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+        }
+    }
+    
+    // Prepare APK for installation (copy to accessible location)
+    private static File prepareApkForInstallation(Context context, File sourceApk) {
+        try {
+            // Create installation directory in app's external files
+            File installDir = new File(context.getExternalFilesDir(null), "apk_install");
+            if (!installDir.exists() && !installDir.mkdirs()) {
+                LogUtils.logError("Failed to create install directory");
+                return null;
+            }
+            
+            // Create target file with timestamp to avoid conflicts
+            String fileName = sourceApk.getName();
+            if (!fileName.toLowerCase().endsWith(".apk")) {
+                fileName = fileName + ".apk";
+            }
+            
+            // Add timestamp to avoid conflicts
+            String baseName = fileName.substring(0, fileName.lastIndexOf('.'));
+            String extension = fileName.substring(fileName.lastIndexOf('.'));
+            String targetFileName = baseName + "_" + System.currentTimeMillis() + extension;
+            
+            File targetApk = new File(installDir, targetFileName);
+            
+            // Copy APK to accessible location
+            if (!FileUtils.copyFile(sourceApk, targetApk)) {
+                LogUtils.logError("Failed to copy APK to install directory");
+                return null;
+            }
+            
+            // Set file permissions
+            if (!targetApk.setReadable(true, false)) {
+                LogUtils.logDebug("Warning: Could not set APK as readable");
+            }
+            
+            LogUtils.logUser("✅ APK prepared for installation: " + targetApk.getName());
+            LogUtils.logDebug("Target APK path: " + targetApk.getAbsolutePath());
+            
+            return targetApk;
+            
+        } catch (Exception e) {
+            LogUtils.logError("Error preparing APK: " + e.getMessage());
+            return null;
+        }
+    }
+    
+    // Launch the actual installation intent
+    private static void launchInstallationIntent(Context context, File apkFile) {
+        try {
+            Intent installIntent = new Intent(Intent.ACTION_VIEW);
+            installIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            
+            Uri apkUri;
+            
+            // Use FileProvider for Android 7.0+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                apkUri = FileProvider.getUriForFile(context, 
+                    context.getPackageName() + ".provider", apkFile);
+                LogUtils.logDebug("Using FileProvider URI: " + apkUri);
+            } else {
+                apkUri = Uri.fromFile(apkFile);
+                LogUtils.logDebug("Using direct file URI: " + apkUri);
+            }
+            
+            installIntent.setDataAndType(apkUri, "application/vnd.android.package-archive");
+            
+            // Verify intent can be handled
+            if (installIntent.resolveActivity(context.getPackageManager()) != null) {
+                context.startActivity(installIntent);
+                LogUtils.logUser("🚀 Installation intent launched successfully");
+                
+                // Show user guidance
+                Toast.makeText(context, 
+                    "📱 Installation dialog should appear.\nIf not, check your notification panel.", 
+                    Toast.LENGTH_LONG).show();
+                    
+            } else {
+                LogUtils.logError("No activity found to handle install intent");
+                showError(context, "Installation Error", 
+                    "No app found to handle APK installation. This shouldn't happen on Android devices.");
+            }
+            
+        } catch (Exception e) {
+            LogUtils.logError("Failed to launch install intent: " + e.getMessage());
+            showError(context, "Installation Launch Failed", 
+                "Could not start APK installation.\n\nError: " + e.getMessage() + 
+                "\n\nPossible solutions:\n• Restart the app\n• Check storage permissions\n• Try a different APK");
+        }
+    }
+    
+    // Calculate MD5 hash of APK for verification
+    public static String calculateApkHash(File apkFile) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("MD5");
+            try (FileInputStream fis = new FileInputStream(apkFile)) {
+                byte[] buffer = new byte[8192];
+                int bytesRead;
+                while ((bytesRead = fis.read(buffer)) != -1) {
+                    md.update(buffer, 0, bytesRead);
+                }
+            }
+            
+            byte[] hashBytes = md.digest();
+            StringBuilder hexString = new StringBuilder();
+            for (byte b : hashBytes) {
+                String hex = Integer.toHexString(0xff & b);
+                if (hex.length() == 1) {
+                    hexString.append('0');
+                }
+                hexString.append(hex);
+            }
+            return hexString.toString().toUpperCase();
+            
+        } catch (Exception e) {
+            LogUtils.logError("Failed to calculate APK hash: " + e.getMessage());
+            return "UNKNOWN";
+        }
+    }
+    
+    // Get detailed APK information
+    public static ApkInfo getApkInfo(Context context, File apkFile) {
+        ApkInfo info = new ApkInfo();
+        info.fileName = apkFile.getName();
+        info.filePath = apkFile.getAbsolutePath();
+        info.fileSize = apkFile.length();
+        info.lastModified = apkFile.lastModified();
+        
+        try {
+            PackageManager pm = context.getPackageManager();
+            PackageInfo packageInfo = pm.getPackageArchiveInfo(apkFile.getAbsolutePath(), 0);
+            
+            if (packageInfo != null) {
+                info.packageName = packageInfo.packageName;
+                info.versionName = packageInfo.versionName;
+                info.versionCode = packageInfo.versionCode;
+                
+                // Get application label
+                packageInfo.applicationInfo.sourceDir = apkFile.getAbsolutePath();
+                packageInfo.applicationInfo.publicSourceDir = apkFile.getAbsolutePath();
+                info.appName = pm.getApplicationLabel(packageInfo.applicationInfo).toString();
+            }
+            
+        } catch (Exception e) {
+            LogUtils.logDebug("Could not extract package info: " + e.getMessage());
+        }
+        
+        info.hash = calculateApkHash(apkFile);
+        return info;
+    }
+    
+    // Clean up old installation files
+    public static void cleanupInstallFiles(Context context) {
+        try {
+            File installDir = new File(context.getExternalFilesDir(null), "apk_install");
+            if (installDir.exists() && installDir.isDirectory()) {
+                File[] files = installDir.listFiles();
+                if (files != null) {
+                    long currentTime = System.currentTimeMillis();
+                    int deletedCount = 0;
+                    
+                    for (File file : files) {
+                        // Delete files older than 1 hour
+                        if (currentTime - file.lastModified() > 3600000) {
+                            if (file.delete()) {
+                                deletedCount++;
+                            }
+                        }
+                    }
+                    
+                    if (deletedCount > 0) {
+                        LogUtils.logDebug("Cleaned up " + deletedCount + " old installation files");
+                    }
+                }
+            }
+        } catch (Exception e) {
+            LogUtils.logDebug("Error cleaning up install files: " + e.getMessage());
+        }
+    }
+    
+    // Show error dialog
+    private static void showError(Context context, String title, String message) {
+        if (context instanceof Activity) {
+            new AlertDialog.Builder(context)
+                .setTitle("❌ " + title)
+                .setMessage(message)
+                .setPositiveButton("OK", null)
+                .show();
+        } else {
+            Toast.makeText(context, title + ": " + message, Toast.LENGTH_LONG).show();
+        }
+    }
+    
+    // Validation result helper class
+    private static class ValidationResult {
+        boolean isValid = false;
+        String errorMessage = "";
+    }
+    
+    // APK information class
+    public static class ApkInfo {
+        public String fileName;
+        public String filePath;
+        public long fileSize;
+        public long lastModified;
+        public String packageName;
+        public String appName;
+        public String versionName;
+        public int versionCode;
+        public String hash;
+        
+        @Override
+        public String toString() {
+            StringBuilder sb = new StringBuilder();
+            sb.append("=== APK Information ===\n");
+            sb.append("File: ").append(fileName).append("\n");
+            sb.append("Size: ").append(FileUtils.formatFileSize(fileSize)).append("\n");
+            sb.append("Package: ").append(packageName != null ? packageName : "Unknown").append("\n");
+            sb.append("App Name: ").append(appName != null ? appName : "Unknown").append("\n");
+            sb.append("Version: ").append(versionName != null ? versionName : "Unknown");
+            if (versionCode > 0) {
+                sb.append(" (").append(versionCode).append(")");
+            }
+            sb.append("\n");
+            sb.append("Hash: ").append(hash).append("\n");
+            sb.append("Modified: ").append(new java.util.Date(lastModified).toString()).append("\n");
+            return sb.toString();
+        }
+    }
+}
+
+================================================================================
 ModLoader/app/src/main/java/com/modloader/util/ApkPatcher.java
 
 // File: ApkPatcher.java - Enhanced APK patching with real MelonLoader injection
@@ -724,7 +1298,6 @@ public class ApkPatcher {
 }
 
 ================================================================================
-
 ModLoader/app/src/main/java/com/modloader/util/ApkValidator.java
 
 package com.modloader.util;
@@ -917,7 +1490,6 @@ public class ApkValidator {
 }
 
 ================================================================================
-
 ModLoader/app/src/main/java/com/modloader/util/DiagnosticBundleExporter.java
 
 // File: DiagnosticBundleExporter.java - Comprehensive Support Bundle Creator
@@ -1468,7 +2040,6 @@ public class DiagnosticBundleExporter {
 }
 
 ================================================================================
-
 ModLoader/app/src/main/java/com/modloader/util/Downloader.java
 
 // File: Downloader.java (Fixed Utility Class)
@@ -1659,7 +2230,6 @@ public class Downloader {
 }
 
 ================================================================================
-
 ModLoader/app/src/main/java/com/modloader/util/FileUtils.java
 
 // File: FileUtils.java - Complete with all missing methods
@@ -2207,7 +2777,6 @@ public class FileUtils {
 }
 
 ================================================================================
-
 ModLoader/app/src/main/java/com/modloader/util/LogUtils.java
 
 // File: LogUtils.java - Complete logging utility class
@@ -2795,7 +3364,6 @@ public class LogUtils {
 }
 
 ================================================================================
-
 ModLoader/app/src/main/java/com/modloader/util/MelonLoaderDiagnostic.java
 
 // File: MelonLoaderDiagnostic.java (Diagnostic Tool)
@@ -2993,7 +3561,6 @@ public class MelonLoaderDiagnostic {
 }
 
 ================================================================================
-
 ModLoader/app/src/main/java/com/modloader/util/OfflineZipImporter.java
 
 // File: OfflineZipImporter.java - Smart ZIP Import with Auto-Detection
@@ -3344,7 +3911,6 @@ public class OfflineZipImporter {
 }
 
 ================================================================================
-
 ModLoader/app/src/main/java/com/modloader/util/OnlineInstaller.java
 
 // File: OnlineInstaller.java (Utility Class) - Complete Automated Installation System
@@ -3734,7 +4300,6 @@ public class OnlineInstaller {
 }
 
 ================================================================================
-
 ModLoader/app/src/main/java/com/modloader/util/PatchResult.java
 
 // File: PatchResult.java - Complete patch result class
@@ -3935,7 +4500,6 @@ public class PatchResult {
 }
 
 ================================================================================
-
 ModLoader/app/src/main/java/com/modloader/util/PathManager.java
 
 // File: PathManager.java (FIXED Part 1) - Centralized Path Management
@@ -4404,7 +4968,6 @@ public class PathManager {
 }
 
 ================================================================================
-
 ModLoader/app/src/main/java/com/modloader/util/PermissionManager.java
 
 // File: PermissionManager.java (COMPLETE FIXED) - No Syntax Errors
@@ -5202,7 +5765,6 @@ public class PermissionManager {
 }
 
 ================================================================================
-
 ModLoader/app/src/main/java/com/modloader/util/PrivilegeManager.java
 
 package com.modloader.util;
@@ -5212,7 +5774,6 @@ public class PrivilegeManager {
 
 
 ================================================================================
-
 ModLoader/app/src/main/java/com/modloader/util/RootManager.java
 
 // File: RootManager.java (FIXED) - Complete Root Access Management
@@ -5957,7 +6518,6 @@ public class RootManager {
 }
 
 ================================================================================
-
 ModLoader/app/src/main/java/com/modloader/util/ShizukuManager.java
 
 // File: ShizukuManager.java (FIXED) - Complete Shizuku Integration with Proper Permission Detection
@@ -6530,20 +7090,19 @@ public class ShizukuManager {
 } 
 
 ================================================================================
-
 ModLoader/app/src/main/res/drawable/gradient_background_135.xml
 
 <?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android">
     <gradient
+        android:type="linear"
         android:angle="135"
         android:startColor="#E8F5E8"
-        android:endColor="#F1F8E9"
-        android:type="linear" />
+        android:centerColor="#F1F8E9"
+        android:endColor="#C8E6C9" />
 </shape>
 
 ================================================================================
-
 ModLoader/app/src/main/res/drawable/ic_arrow_back.xml
 
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
@@ -6558,7 +7117,6 @@ ModLoader/app/src/main/res/drawable/ic_arrow_back.xml
 
 
 ================================================================================
-
 ModLoader/app/src/main/res/drawable/ic_launcher_background.xml
 
 <?xml version="1.0" encoding="utf-8"?>
@@ -6734,7 +7292,6 @@ ModLoader/app/src/main/res/drawable/ic_launcher_background.xml
 
 
 ================================================================================
-
 ModLoader/app/src/main/res/drawable-v24/ic_launcher_foreground.xml
 
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
@@ -6769,7 +7326,6 @@ ModLoader/app/src/main/res/drawable-v24/ic_launcher_foreground.xml
 </vector>
 
 ================================================================================
-
 ModLoader/app/src/main/res/layout/activity_about.xml
 
 <?xml version="1.0" encoding="utf-8"?>
@@ -6809,7 +7365,6 @@ ModLoader/app/src/main/res/layout/activity_about.xml
 </ScrollView>
 
 ================================================================================
-
 ModLoader/app/src/main/res/layout/activity_addon_management.xml
 
 <!-- File: activity_addon_management.xml -->
@@ -6982,7 +7537,6 @@ ModLoader/app/src/main/res/layout/activity_addon_management.xml
 
 
 ================================================================================
-
 ModLoader/app/src/main/res/layout/activity_addons.xml
 
 <?xml version="1.0" encoding="utf-8"?>
@@ -6999,7 +7553,6 @@ ModLoader/app/src/main/res/layout/activity_addons.xml
 
 
 ================================================================================
-
 ModLoader/app/src/main/res/layout/activity_dll_mod.xml
 
 <?xml version="1.0" encoding="utf-8"?>
@@ -7151,7 +7704,6 @@ ModLoader/app/src/main/res/layout/activity_dll_mod.xml
 </ScrollView>
 
 ================================================================================
-
 ModLoader/app/src/main/res/layout/activity_instructions.xml
 
 <?xml version="1.0" encoding="utf-8"?>
@@ -7197,7 +7749,6 @@ ModLoader/app/src/main/res/layout/activity_instructions.xml
 
 
 ================================================================================
-
 ModLoader/app/src/main/res/layout/activity_log.xml
 
 <?xml version="1.0" encoding="utf-8"?>
@@ -7234,7 +7785,6 @@ ModLoader/app/src/main/res/layout/activity_log.xml
 </LinearLayout>
 
 ================================================================================
-
 ModLoader/app/src/main/res/layout/activity_log_viewer_enhanced.xml
 
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
@@ -7477,249 +8027,215 @@ ModLoader/app/src/main/res/layout/activity_log_viewer_enhanced.xml
 </LinearLayout>
 
 ================================================================================
-
 ModLoader/app/src/main/res/layout/activity_main.xml
 
-<!-- File: activity_main.xml (Updated with Plugin/Addon Button) -->
-<!-- Path: app/src/main/res/layout/activity_main.xml -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:padding="24dp"
-    android:background="@drawable/gradient_background_135"
-    android:gravity="center">
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView
+     xmlns:android="http://schemas.android.com/apk/res/android"
+     xmlns:app="http://schemas.android.com/apk/res-auto"
+     android:layout_height="match_parent"
+     android:layout_width="match_parent"
+     android:background="#F5F5F5"
+     android:fillViewport="true"
+     android:padding="16dp">
 
-    <!-- Header Section -->
     <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:gravity="center"
-        android:background="#FFFFFF"
-        android:padding="32dp"
-        android:layout_marginBottom="32dp"
-        android:elevation="8dp">
+         android:layout_height="wrap_content"
+         android:layout_width="match_parent"
+         android:gravity="center_horizontal"
+         android:orientation="vertical">
+
+        <androidx.cardview.widget.CardView
+             android:layout_height="wrap_content"
+             android:layout_width="match_parent"
+             android:layout_marginBottom="24dp"
+             app:cardElevation="8dp"
+             app:cardBackgroundColor="#FFFFFF"
+             app:cardCornerRadius="16dp">
+
+            <LinearLayout
+                 android:layout_height="wrap_content"
+                 android:layout_width="match_parent"
+                 android:gravity="center"
+                 android:padding="24dp"
+                 android:orientation="vertical">
+
+                <TextView
+                     android:layout_height="wrap_content"
+                     android:layout_width="match_parent"
+                     android:layout_marginBottom="8dp"
+                     android:gravity="center"
+                     android:textSize="32sp"
+                     android:textColor="#2E7D32"
+                     android:text=" Mod Loader"
+                     android:textStyle="bold" />
+
+                <TextView
+                     android:layout_height="wrap_content"
+                     android:layout_width="match_parent"
+                     android:gravity="center"
+                     android:textSize="16sp"
+                     android:textColor="#4CAF50"
+                     android:text="Main Menu" />
+
+            </LinearLayout>
+
+        </androidx.cardview.widget.CardView>
+
+        <androidx.cardview.widget.CardView
+             android:layout_height="wrap_content"
+             android:layout_width="match_parent"
+             android:layout_marginBottom="16dp"
+             app:cardElevation="6dp"
+             app:cardBackgroundColor="#E3F2FD"
+             app:cardCornerRadius="12dp">
+
+            <LinearLayout
+                 android:layout_height="wrap_content"
+                 android:layout_width="match_parent"
+                 android:padding="20dp"
+                 android:orientation="vertical">
+
+                <TextView
+                     android:layout_height="wrap_content"
+                     android:layout_width="match_parent"
+                     android:layout_marginBottom="8dp"
+                     android:textSize="20sp"
+                     android:textColor="#1565C0"
+                     android:text=" Universal Mode"
+                     android:textStyle="bold" />
+
+                <TextView
+                     android:layout_height="wrap_content"
+                     android:layout_width="match_parent"
+                     android:layout_marginBottom="16dp"
+                     android:textSize="14sp"
+                     android:textColor="#1976D2"
+                     android:text="Inject loaders into any APK file" />
+
+                <Button
+                     android:layout_height="wrap_content"
+                     android:layout_width="match_parent"
+                     android:background="#2196F3"
+                     android:minHeight="56dp"
+                     android:textSize="16sp"
+                     android:textColor="@android:color/white"
+                     android:id="@+id/universal_button"
+                     android:text=" Universal Mode"
+                     android:textStyle="bold" />
+
+            </LinearLayout>
+
+        </androidx.cardview.widget.CardView>
+
+        <androidx.cardview.widget.CardView
+             android:layout_height="wrap_content"
+             android:layout_width="match_parent"
+             android:layout_marginBottom="16dp"
+             app:cardElevation="6dp"
+             app:cardBackgroundColor="#E8F5E8"
+             app:cardCornerRadius="12dp">
+
+            <LinearLayout
+                 android:layout_height="wrap_content"
+                 android:layout_width="match_parent"
+                 android:padding="20dp"
+                 android:orientation="vertical">
+
+                <TextView
+                     android:layout_height="wrap_content"
+                     android:layout_width="match_parent"
+                     android:layout_marginBottom="8dp"
+                     android:textSize="20sp"
+                     android:textColor="#2E7D32"
+                     android:text=" Specific Game Mode"
+                     android:textStyle="bold" />
+
+                <TextView
+                     android:layout_height="wrap_content"
+                     android:layout_width="match_parent"
+                     android:layout_marginBottom="16dp"
+                     android:textSize="14sp"
+                     android:textColor="#388E3C"
+                     android:text="Optimized modding for supported games" />
+
+                <Button
+                     android:layout_height="wrap_content"
+                     android:layout_width="match_parent"
+                     android:background="#4CAF50"
+                     android:minHeight="56dp"
+                     android:textSize="16sp"
+                     android:textColor="@android:color/white"
+                     android:id="@+id/specific_button"
+                     android:text=" Specific Game Mode"
+                     android:textStyle="bold" />
+
+            </LinearLayout>
+
+        </androidx.cardview.widget.CardView>
+
+        <androidx.cardview.widget.CardView
+             android:layout_height="wrap_content"
+             android:layout_width="match_parent"
+             android:layout_marginBottom="24dp"
+             app:cardElevation="6dp"
+             app:cardBackgroundColor="#F3E5F5"
+             app:cardCornerRadius="12dp">
+
+            <LinearLayout
+                 android:layout_height="wrap_content"
+                 android:layout_width="match_parent"
+                 android:padding="20dp"
+                 android:orientation="vertical">
+
+                <TextView
+                     android:layout_height="wrap_content"
+                     android:layout_width="match_parent"
+                     android:layout_marginBottom="8dp"
+                     android:textSize="20sp"
+                     android:textColor="#7B1FA2"
+                     android:text=" Plugin Management"
+                     android:textStyle="bold" />
+
+                <TextView
+                     android:layout_height="wrap_content"
+                     android:layout_width="match_parent"
+                     android:layout_marginBottom="16dp"
+                     android:textSize="14sp"
+                     android:textColor="#8E24AA"
+                     android:text="Advanced plugin system for extended functionality" />
+
+                <Button
+                     android:layout_height="wrap_content"
+                     android:layout_width="match_parent"
+                     android:background="#9C27B0"
+                     android:minHeight="56dp"
+                     android:textSize="16sp"
+                     android:textColor="@android:color/white"
+                     android:id="@+id/plugin_button"
+                     android:text=" Plugin Management"
+                     android:textStyle="bold" />
+
+            </LinearLayout>
+
+        </androidx.cardview.widget.CardView>
 
         <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="🎮 Mod Loader"
-            android:textSize="32sp"
-            android:textStyle="bold"
-            android:textColor="#2E7D32"
-            android:gravity="center"
-            android:layout_marginBottom="12dp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Choose your modding approach"
-            android:textSize="16sp"
-            android:textColor="#4CAF50"
-            android:gravity="center"
-            android:lineSpacingExtra="4dp" />
+             android:layout_height="wrap_content"
+             android:layout_width="match_parent"
+             android:gravity="center"
+             android:background="#F0F0F0"
+             android:padding="16dp"
+             android:textSize="12sp"
+             android:textColor="#666666"
+             android:layout_marginTop="16dp"
+             android:text="= Choose Universal Mode for any APK or Specific Mode for optimized game support" />
 
     </LinearLayout>
 
-    <!-- Main Navigation Buttons -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:layout_marginBottom="24dp">
-
-        <!-- Universal Mode Card -->
-        <androidx.cardview.widget.CardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            app:cardCornerRadius="12dp"
-            app:cardElevation="6dp"
-            app:cardBackgroundColor="#E3F2FD">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="20dp">
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="🌐 Universal Mode"
-                    android:textSize="20sp"
-                    android:textStyle="bold"
-                    android:textColor="#1565C0"
-                    android:layout_marginBottom="8dp" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Inject loaders into any APK file\n• Works with any Unity game\n• Manual APK selection required"
-                    android:textSize="14sp"
-                    android:textColor="#1976D2"
-                    android:lineSpacingExtra="4dp"
-                    android:layout_marginBottom="12dp" />
-
-                <Button
-                    android:id="@+id/universal_button"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="🌐 Universal Modding"
-                    android:textSize="16sp"
-                    android:textStyle="bold"
-                    android:background="#2196F3"
-                    android:textColor="@android:color/white"
-                    android:minHeight="56dp"
-                    android:elevation="4dp" />
-
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
-
-        <!-- Specific Mode Card -->
-        <androidx.cardview.widget.CardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            app:cardCornerRadius="12dp"
-            app:cardElevation="6dp"
-            app:cardBackgroundColor="#E8F5E8">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="20dp">
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="🎯 Specific Game Mode"
-                    android:textSize="20sp"
-                    android:textStyle="bold"
-                    android:textColor="#2E7D32"
-                    android:layout_marginBottom="8dp" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Optimized for supported games\n• Pre-configured settings\n• Game-specific features\n• Recommended for beginners"
-                    android:textSize="14sp"
-                    android:textColor="#388E3C"
-                    android:lineSpacingExtra="4dp"
-                    android:layout_marginBottom="12dp" />
-
-                <Button
-                    android:id="@+id/specific_button"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="🎯 Game-Specific Modding"
-                    android:textSize="16sp"
-                    android:textStyle="bold"
-                    android:background="#4CAF50"
-                    android:textColor="@android:color/white"
-                    android:minHeight="56dp"
-                    android:elevation="4dp" />
-
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
-
-        <!-- NEW: Addon Management Card -->
-        <androidx.cardview.widget.CardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            app:cardCornerRadius="12dp"
-            app:cardElevation="6dp"
-            app:cardBackgroundColor="#F3E5F5">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="20dp">
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="🔌 Addon System"
-                    android:textSize="20sp"
-                    android:textStyle="bold"
-                    android:textColor="#7B1FA2"
-                    android:layout_marginBottom="8dp" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Customize and extend ModLoader\n• Themes and UI enhancements\n• Advanced file operations\n• Smart installation tools"
-                    android:textSize="14sp"
-                    android:textColor="#8E24AA"
-                    android:lineSpacingExtra="4dp"
-                    android:layout_marginBottom="12dp" />
-
-                <Button
-                    android:id="@+id/plugin_button"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="🔌 Manage Addons"
-                    android:textSize="16sp"
-                    android:textStyle="bold"
-                    android:background="#9C27B0"
-                    android:textColor="@android:color/white"
-                    android:minHeight="56dp"
-                    android:elevation="4dp" />
-
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
-
-    </LinearLayout>
-
-    <!-- Footer Info -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:background="#FFFFFF"
-        android:padding="16dp"
-        android:layout_marginTop="16dp"
-        android:elevation="2dp">
-
-        <TextView
-            android:layout_width="0dp"
-            android:layout_weight="1"
-            android:layout_height="wrap_content"
-            android:text="💡 Tips:\n• Try Specific Mode first\n• Use Addons for customization"
-            android:textSize="12sp"
-            android:textColor="#666666"
-            android:lineSpacingExtra="2dp" />
-
-        <TextView
-            android:layout_width="0dp"
-            android:layout_weight="1"
-            android:layout_height="wrap_content"
-            android:text="🎯 New users:\n• Start with Terraria\n• Install sample addons"
-            android:textSize="12sp"
-            android:textColor="#666666"
-            android:lineSpacingExtra="2dp" />
-
-    </LinearLayout>
-
-    <!-- Version Info -->
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="ModLoader v1.0 with Addon System"
-        android:textSize="10sp"
-        android:textColor="#999999"
-        android:gravity="center"
-        android:layout_marginTop="16dp" />
-
-</LinearLayout>
+</ScrollView>
 
 ================================================================================
-
 ModLoader/app/src/main/res/layout/activity_mod_list.xml
 
 <?xml version="1.0" encoding="utf-8"?>
@@ -7789,7 +8305,6 @@ ModLoader/app/src/main/res/layout/activity_mod_list.xml
 
 
 ================================================================================
-
 ModLoader/app/src/main/res/layout/activity_mod_management.xml
 
 <?xml version="1.0" encoding="utf-8"?>
@@ -8055,7 +8570,6 @@ ModLoader/app/src/main/res/layout/activity_mod_management.xml
 </ScrollView>
 
 ================================================================================
-
 ModLoader/app/src/main/res/layout/activity_offline_diagnostic.xml
 
 <?xml version="1.0" encoding="utf-8"?>
@@ -8283,7 +8797,6 @@ ModLoader/app/src/main/res/layout/activity_offline_diagnostic.xml
 </ScrollView>
 
 ================================================================================
-
 ModLoader/app/src/main/res/layout/activity_settings_enhanced.xml
 
 <!-- File: activity_settings_enhanced.xml (Enhanced Settings Layout - Error-Free) -->
