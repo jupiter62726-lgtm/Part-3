@@ -1,990 +1,5 @@
 
-
-===== ModLoader/app/src/main/java/com/modloader/ui/OfflineDiagnosticActivity.java =====
-
-// File: OfflineDiagnosticActivity.java (Part 1 - Main Class)
-// Path: /main/java/com/terrarialoader/ui/OfflineDiagnosticActivity.java
-
-package com.modloader.ui;
-
-import android.app.ProgressDialog;
-import android.content.Intent;
-import android.net.Uri;
-import android.os.AsyncTask;
-import android.os.Bundle;
-import android.widget.Button;
-import android.widget.TextView;
-import android.widget.Toast;
-
-import androidx.activity.result.ActivityResultLauncher;
-import androidx.activity.result.contract.ActivityResultContracts;
-import androidx.appcompat.app.AlertDialog;
-import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.content.FileProvider;
-
-import com.modloader.R;
-import com.modloader.diagnostic.DiagnosticManager;
-import com.modloader.util.LogUtils;
-import com.modloader.util.FileUtils;
-import com.modloader.util.PathManager;
-import com.modloader.loader.MelonLoaderManager;
-
-import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
-
-public class OfflineDiagnosticActivity extends AppCompatActivity {
-    
-    private DiagnosticManager diagnosticManager;
-    
-    // UI Components
-    private Button btnRunFullDiagnostic;
-    private Button btnDiagnoseApk;
-    private Button btnFixSettings;
-    private Button btnAutoRepair;
-    private Button btnExportReport;
-    private Button btnClearResults;
-    private TextView diagnosticResultsText;
-    
-    // Progress dialog
-    private ProgressDialog progressDialog;
-    
-    // File picker for APK selection
-    private final ActivityResultLauncher<Intent> apkPickerLauncher = 
-        registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
-            if (result.getResultCode() == RESULT_OK && result.getData() != null) {
-                Uri apkUri = result.getData().getData();
-                runApkDiagnostic(apkUri);
-            }
-        });
-    
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_offline_diagnostic);
-        setTitle("🔧 Offline Diagnostics");
-        
-        initializeComponents();
-        setupUI();
-        
-        LogUtils.logUser("Offline Diagnostics opened");
-    }
-    
-    private void initializeComponents() {
-        diagnosticManager = new DiagnosticManager(this);
-        
-        // Find UI components
-        btnRunFullDiagnostic = findViewById(R.id.btn_run_full_diagnostic);
-        btnDiagnoseApk = findViewById(R.id.btn_diagnose_apk);
-        btnFixSettings = findViewById(R.id.btn_fix_settings);
-        btnAutoRepair = findViewById(R.id.btn_auto_repair);
-        btnExportReport = findViewById(R.id.btn_export_report);
-        btnClearResults = findViewById(R.id.btn_clear_results);
-        diagnosticResultsText = findViewById(R.id.diagnostic_results_text);
-    }
-    
-    private void setupUI() {
-        // Full system diagnostic
-        btnRunFullDiagnostic.setOnClickListener(v -> runFullSystemCheck());
-        
-        // APK diagnostic
-        btnDiagnoseApk.setOnClickListener(v -> selectApkForDiagnostic());
-        
-        // Settings diagnostic and fix
-        btnFixSettings.setOnClickListener(v -> diagnoseAndFixSettings());
-        
-        // Auto repair
-        btnAutoRepair.setOnClickListener(v -> performAutoRepair());
-        
-        // Export report
-        btnExportReport.setOnClickListener(v -> exportDiagnosticReport());
-        
-        // Clear results
-        btnClearResults.setOnClickListener(v -> clearResults());
-    }
-    
-    private void runFullSystemCheck() {
-        showProgress("Running comprehensive system diagnostic...");
-        
-        AsyncTask.execute(() -> {
-            try {
-                StringBuilder results = new StringBuilder();
-                results.append("=== TerrariaLoader Comprehensive Diagnostic ===\n");
-                results.append("Timestamp: ").append(new java.util.Date().toString()).append("\n");
-                results.append("Device: ").append(android.os.Build.MANUFACTURER).append(" ")
-                       .append(android.os.Build.MODEL).append("\n");
-                results.append("Android: ").append(android.os.Build.VERSION.RELEASE).append("\n\n");
-                
-                // 1. Directory Structure Check
-                results.append("📁 DIRECTORY STRUCTURE\n");
-                results.append(checkDirectoryStructure()).append("\n");
-                
-                // 2. MelonLoader/LemonLoader Status
-                results.append("🛠️ LOADER STATUS\n");
-                results.append(checkLoaderStatus()).append("\n");
-                
-                // 3. Mod Files Validation
-                results.append("📦 MOD FILES\n");
-                results.append(checkModFiles()).append("\n");
-                
-                // 4. System Permissions
-                results.append("🔐 PERMISSIONS\n");
-                results.append(checkPermissions()).append("\n");
-                
-                // 5. Storage and Space
-                results.append("💾 STORAGE\n");
-                results.append(checkStorage()).append("\n");
-                
-                // 6. Settings Validation
-                results.append("⚙️ SETTINGS\n");
-                results.append(checkSettingsIntegrity()).append("\n");
-                
-                // 7. Suggested Actions
-                results.append("💡 RECOMMENDATIONS\n");
-                results.append(generateRecommendations()).append("\n");
-                
-                runOnUiThread(() -> {
-                    hideProgress();
-                    displayResults(results.toString());
-                    LogUtils.logUser("Full system diagnostic completed");
-                });
-            } catch (Exception e) {
-                runOnUiThread(() -> {
-                    hideProgress();
-                    showError("Diagnostic failed: " + e.getMessage());
-                    LogUtils.logDebug("Diagnostic error: " + e.toString());
-                });
-            }
-        });
-    }
-    
-    private String checkDirectoryStructure() {
-        StringBuilder result = new StringBuilder();
-        
-        try {
-            String gamePackage = "com.and.games505.TerrariaPaid";
-            File baseDir = PathManager.getGameBaseDir(this, gamePackage);
-            
-            if (baseDir == null) {
-                result.append("❌ Base directory path is null\n");
-                return result.toString();
-            }
-            
-            result.append("Base Path: ").append(baseDir.getAbsolutePath()).append("\n");
-            
-            // Check key directories
-            String[] criticalPaths = {
-                "",                           // Base
-                "Mods",                      // Mods root
-                "Mods/DEX",                  // DEX mods
-                "Mods/DLL",                  // DLL mods
-                "Loaders",                   // Loaders root
-                "Loaders/MelonLoader",       // MelonLoader
-                "Logs",                      // Game logs
-                "AppLogs",                   // App logs
-                "Config",                    // Configuration
-                "Backups"                    // Backups
-            };
-            
-            int existingDirs = 0;
-            for (String path : criticalPaths) {
-                File dir = new File(baseDir, path);
-                boolean exists = dir.exists() && dir.isDirectory();
-                String status = exists ? "✅" : "❌";
-                result.append(status).append(" ").append(path.isEmpty() ? "Base" : path).append("\n");
-                if (exists) existingDirs++;
-            }
-            
-            result.append("\nDirectory Health: ").append(existingDirs).append("/").append(criticalPaths.length);
-            if (existingDirs < criticalPaths.length) {
-                result.append(" (⚠️ Some directories missing)");
-            } else {
-                result.append(" (✅ Complete)");
-            }
-            
-        } catch (Exception e) {
-            result.append("❌ Directory check failed: ").append(e.getMessage());
-        }
-        
-        return result.toString();
-    }
-    
-    private String checkLoaderStatus() {
-        StringBuilder result = new StringBuilder();
-        
-        try {
-            String gamePackage = "com.and.games505.TerrariaPaid";
-            boolean melonInstalled = MelonLoaderManager.isMelonLoaderInstalled(this);
-            boolean lemonInstalled = MelonLoaderManager.isLemonLoaderInstalled(this);
-            
-            if (melonInstalled) {
-                result.append("✅ MelonLoader detected\n");
-                result.append("   Version: ").append(MelonLoaderManager.getInstalledLoaderVersion()).append("\n");
-                
-                // Check core files
-                File loaderDir = PathManager.getMelonLoaderDir(this, gamePackage);
-                if (loaderDir != null && loaderDir.exists()) {
-                    File[] files = loaderDir.listFiles();
-                    int fileCount = (files != null) ? files.length : 0;
-                    result.append("   Files: ").append(fileCount).append(" detected\n");
-                }
-            } else if (lemonInstalled) {
-                result.append("✅ LemonLoader detected\n");
-                result.append("   Version: ").append(MelonLoaderManager.getInstalledLoaderVersion()).append("\n");
-            } else {
-                result.append("❌ No loader installed\n");
-                result.append("   Recommendation: Use 'Complete Setup Wizard' to install MelonLoader\n");
-            }
-            
-            // Check runtime directories
-            File net8Dir = new File(PathManager.getMelonLoaderDir(this, gamePackage), "net8");
-            File net35Dir = new File(PathManager.getMelonLoaderDir(this, gamePackage), "net35");
-            
-            result.append("Runtime Support:\n");
-            result.append(net8Dir.exists() ? "✅" : "❌").append(" NET8 Runtime\n");
-            result.append(net35Dir.exists() ? "✅" : "❌").append(" NET35 Runtime\n");
-            
-        } catch (Exception e) {
-            result.append("❌ Loader check failed: ").append(e.getMessage()).append("\n");
-        }
-        
-        return result.toString();
-    }
-    
-    private String checkModFiles() {
-        StringBuilder result = new StringBuilder();
-        
-        try {
-            String gamePackage = "com.and.games505.TerrariaPaid";
-            
-            // Check DEX mods
-            File dexDir = PathManager.getDexModsDir(this, gamePackage);
-            int dexCount = 0, dexEnabled = 0;
-            if (dexDir != null && dexDir.exists()) {
-                File[] dexFiles = dexDir.listFiles((dir, name) -> {
-                    String lower = name.toLowerCase();
-                    return lower.endsWith(".dex") || lower.endsWith(".jar") || 
-                           lower.endsWith(".dex.disabled") || lower.endsWith(".jar.disabled");
-                });
-                if (dexFiles != null) {
-                    dexCount = dexFiles.length;
-                    for (File file : dexFiles) {
-                        if (!file.getName().endsWith(".disabled")) {
-                            dexEnabled++;
-                        }
-                    }
-                }
-            }
-            
-            // Check DLL mods
-            File dllDir = PathManager.getDllModsDir(this, gamePackage);
-            int dllCount = 0, dllEnabled = 0;
-            if (dllDir != null && dllDir.exists()) {
-                File[] dllFiles = dllDir.listFiles((dir, name) -> {
-                    String lower = name.toLowerCase();
-                    return lower.endsWith(".dll") || lower.endsWith(".dll.disabled");
-                });
-                if (dllFiles != null) {
-                    dllCount = dllFiles.length;
-                    for (File file : dllFiles) {
-                        if (!file.getName().endsWith(".disabled")) {
-                            dllEnabled++;
-                        }
-                    }
-                }
-            }
-            
-            result.append("DEX/JAR Mods: ").append(dexEnabled).append("/").append(dexCount)
-                  .append(" enabled\n");
-            result.append("DLL Mods: ").append(dllEnabled).append("/").append(dllCount)
-                  .append(" enabled\n");
-            result.append("Total Active Mods: ").append(dexEnabled + dllEnabled).append("\n");
-            
-            if (dexCount == 0 && dllCount == 0) {
-                result.append("ℹ️ No mods installed - use Mod Management to add mods\n");
-            }
-            
-        } catch (Exception e) {
-            result.append("❌ Mod check failed: ").append(e.getMessage()).append("\n");
-        }
-        
-        return result.toString();
-    }
-    
-    private String checkPermissions() {
-        StringBuilder result = new StringBuilder();
-        
-        try {
-            // Test write permissions
-            File testDir = new File(getExternalFilesDir(null), "permission_test");
-            testDir.mkdirs();
-            
-            File testFile = new File(testDir, "write_test.txt");
-            try (FileWriter writer = new FileWriter(testFile)) {
-                writer.write("Permission test successful");
-                result.append("✅ External storage write access\n");
-            } catch (Exception e) {
-                result.append("❌ External storage write failed: ").append(e.getMessage()).append("\n");
-            } finally {
-                if (testFile.exists()) testFile.delete();
-                testDir.delete();
-            }
-            
-            // Check install packages permission
-            try {
-                getPackageManager().canRequestPackageInstalls();
-                result.append("✅ Package installation permission available\n");
-            } catch (Exception e) {
-                result.append("⚠️ Package installation permission may be restricted\n");
-            }
-            
-        } catch (Exception e) {
-            result.append("❌ Permission check failed: ").append(e.getMessage()).append("\n");
-        }
-        
-        return result.toString();
-    }
-    
-    private String checkStorage() {
-        StringBuilder result = new StringBuilder();
-        
-        try {
-            File externalDir = getExternalFilesDir(null);
-            if (externalDir != null) {
-                long freeSpace = externalDir.getFreeSpace();
-                long totalSpace = externalDir.getTotalSpace();
-                long usedSpace = totalSpace - freeSpace;
-                
-                result.append("Free Space: ").append(FileUtils.formatFileSize(freeSpace)).append("\n");
-                result.append("Used Space: ").append(FileUtils.formatFileSize(usedSpace)).append("\n");
-                result.append("Total Space: ").append(FileUtils.formatFileSize(totalSpace)).append("\n");
-                
-                if (freeSpace < 100 * 1024 * 1024) { // Less than 100MB
-                    result.append("⚠️ Low storage space - consider freeing up space\n");
-                } else {
-                    result.append("✅ Sufficient storage space available\n");
-                }
-            } else {
-                result.append("❌ Cannot access external storage\n");
-            }
-            
-        } catch (Exception e) {
-            result.append("❌ Storage check failed: ").append(e.getMessage()).append("\n");
-        }
-        
-        return result.toString();
-    }
-    
-    private String checkSettingsIntegrity() {
-        StringBuilder result = new StringBuilder();
-        
-        try {
-            // Check app preferences
-            android.content.SharedPreferences prefs = 
-                getSharedPreferences("TerrariaLoaderPrefs", MODE_PRIVATE);
-            
-            // Test write operation
-            android.content.SharedPreferences.Editor editor = prefs.edit();
-            editor.putString("diagnostic_test", "test_value");
-            boolean writeSuccess = editor.commit();
-            
-            if (writeSuccess) {
-                String testValue = prefs.getString("diagnostic_test", null);
-                if ("test_value".equals(testValue)) {
-                    result.append("✅ Settings persistence working\n");
-                    // Clean up test
-                    editor.remove("diagnostic_test").commit();
-                } else {
-                    result.append("❌ Settings read/write mismatch\n");
-                }
-            } else {
-                result.append("❌ Settings write failed\n");
-                result.append("   This may explain your auto-refresh issue\n");
-            }
-            
-        } catch (Exception e) {
-            result.append("❌ Settings check failed: ").append(e.getMessage()).append("\n");
-        }
-        
-        return result.toString();
-    }
-    
-    private String generateRecommendations() {
-        StringBuilder result = new StringBuilder();
-        
-        try {
-            boolean hasIssues = false;
-            
-            // Check if directories need repair
-            File baseDir = PathManager.getGameBaseDir(this, "com.and.games505.TerrariaPaid");
-            if (baseDir == null || !baseDir.exists()) {
-                result.append("• Run 'Auto-Repair' to create missing directories\n");
-                hasIssues = true;
-            }
-            
-            // Check if loader is missing
-            if (!MelonLoaderManager.isMelonLoaderInstalled(this) && 
-                !MelonLoaderManager.isLemonLoaderInstalled(this)) {
-                result.append("• Use 'Complete Setup Wizard' to install MelonLoader\n");
-                hasIssues = true;
-            }
-            
-            // Check storage
-            File externalDir = getExternalFilesDir(null);
-            if (externalDir != null && externalDir.getFreeSpace() < 50 * 1024 * 1024) {
-                result.append("• Free up storage space (recommended: 100MB+)\n");
-                hasIssues = true;
-            }
-            
-            if (!hasIssues) {
-                result.append("✅ System appears to be in good condition\n");
-                result.append("• If you're still experiencing issues, try:\n");
-                result.append("  - Restart the app completely\n");
-                result.append("  - Reboot your device\n");
-                result.append("  - Check specific mod compatibility\n");
-            }
-            
-        } catch (Exception e) {
-            result.append("• General recommendation: Check system permissions\n");
-        }
-        
-        return result.toString();
-    }
-    
-    // Continue to Part 2...
-// File: OfflineDiagnosticActivity.java (Part 2 - Methods & UI)
-// Continuation of Part 1
-
-    private void selectApkForDiagnostic() {
-        Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
-        intent.setType("application/vnd.android.package-archive");
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        
-        try {
-            apkPickerLauncher.launch(Intent.createChooser(intent, "Select APK to Diagnose"));
-        } catch (Exception e) {
-            showToast("No file manager available");
-        }
-    }
-    
-    private void runApkDiagnostic(Uri apkUri) {
-        showProgress("Analyzing APK installation issues...");
-        
-        AsyncTask.execute(() -> {
-            try {
-                StringBuilder results = new StringBuilder();
-                results.append("=== APK Installation Diagnostic ===\n");
-                results.append("File URI: ").append(apkUri.toString()).append("\n\n");
-                
-                String fileName = getFileNameFromUri(apkUri);
-                results.append("File Name: ").append(fileName != null ? fileName : "Unknown").append("\n");
-                
-                results.append(validateApkFromUri(apkUri)).append("\n");
-                results.append("🔧 INSTALLATION ENVIRONMENT\n");
-                results.append(checkInstallationEnvironment()).append("\n");
-                results.append("📱 DEVICE COMPATIBILITY\n");
-                results.append(checkDeviceCompatibility()).append("\n");
-                results.append("💡 SOLUTIONS FOR APK PARSING ERRORS\n");
-                results.append(getApkSolutions()).append("\n");
-                
-                runOnUiThread(() -> {
-                    hideProgress();
-                    displayResults(results.toString());
-                });
-            } catch (Exception e) {
-                runOnUiThread(() -> {
-                    hideProgress();
-                    showError("APK analysis failed: " + e.getMessage());
-                });
-            }
-        });
-    }
-    
-    private String validateApkFromUri(Uri apkUri) {
-        StringBuilder result = new StringBuilder();
-        result.append("📦 APK VALIDATION\n");
-        
-        try (java.io.InputStream stream = getContentResolver().openInputStream(apkUri)) {
-            if (stream == null) {
-                result.append("❌ Cannot access APK file\n");
-                return result.toString();
-            }
-            
-            int available = stream.available();
-            if (available > 0) {
-                result.append("✅ APK accessible (").append(FileUtils.formatFileSize(available)).append(")\n");
-                if (available < 10 * 1024 * 1024) {
-                    result.append("⚠️ APK seems small for Terraria - may be corrupted\n");
-                }
-            } else {
-                result.append("⚠️ APK file size unknown or empty\n");
-            }
-            
-            byte[] header = new byte[30];
-            int bytesRead = stream.read(header);
-            
-            if (bytesRead >= 4) {
-                if (header[0] == 0x50 && header[1] == 0x4b && header[2] == 0x03 && header[3] == 0x04) {
-                    result.append("✅ Valid ZIP/APK signature\n");
-                } else {
-                    result.append("❌ Invalid ZIP/APK signature - file is corrupted\n");
-                    result.append("   This is likely causing your parsing error!\n");
-                }
-            } else {
-                result.append("❌ Cannot read APK header - file corrupted\n");
-            }
-            
-        } catch (Exception e) {
-            result.append("❌ APK access failed: ").append(e.getMessage()).append("\n");
-        }
-        
-        return result.toString();
-    }
-    
-    private String checkInstallationEnvironment() {
-        StringBuilder result = new StringBuilder();
-        
-        try {
-            boolean unknownSources = canInstallFromUnknownSources();
-            result.append(unknownSources ? "✅" : "❌").append(" Unknown sources enabled\n");
-            
-            if (!unknownSources) {
-                result.append("   📋 Fix: Settings > Apps > TerrariaLoader > Install unknown apps\n");
-            }
-            
-            File dataDir = getDataDir();
-            long freeSpace = dataDir.getFreeSpace();
-            result.append("Internal space: ").append(FileUtils.formatFileSize(freeSpace)).append("\n");
-            
-            if (freeSpace < 200 * 1024 * 1024) {
-                result.append("⚠️ Low storage - may cause installation failure\n");
-            }
-            
-            try {
-                getPackageManager().getPackageInfo("com.and.games505.TerrariaPaid", 0);
-                result.append("⚠️ Terraria already installed - uninstall first\n");
-            } catch (android.content.pm.PackageManager.NameNotFoundException e) {
-                result.append("✅ No conflicting installation\n");
-            }
-            
-        } catch (Exception e) {
-            result.append("❌ Environment check failed: ").append(e.getMessage()).append("\n");
-        }
-        
-        return result.toString();
-    }
-    
-    private boolean canInstallFromUnknownSources() {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            return getPackageManager().canRequestPackageInstalls();
-        } else {
-            try {
-                return android.provider.Settings.Secure.getInt(
-                    getContentResolver(), 
-                    android.provider.Settings.Secure.INSTALL_NON_MARKET_APPS, 0) != 0;
-            } catch (Exception e) {
-                return false;
-            }
-        }
-    }
-    
-    private String checkDeviceCompatibility() {
-        StringBuilder result = new StringBuilder();
-        
-        result.append("Device: ").append(android.os.Build.MANUFACTURER)
-              .append(" ").append(android.os.Build.MODEL).append("\n");
-        result.append("Android: ").append(android.os.Build.VERSION.RELEASE)
-              .append(" (API ").append(android.os.Build.VERSION.SDK_INT).append(")\n");
-        result.append("Architecture: ").append(android.os.Build.SUPPORTED_ABIS[0]).append("\n");
-        
-        if (android.os.Build.VERSION.SDK_INT >= 21) {
-            result.append("✅ Compatible Android version\n");
-        } else {
-            result.append("❌ Android version too old\n");
-        }
-        
-        return result.toString();
-    }
-    
-    private String getApkSolutions() {
-        StringBuilder result = new StringBuilder();
-        
-        result.append("For 'There was a problem parsing the package':\n\n");
-        result.append("1. 🔧 Re-download APK (may be corrupted)\n");
-        result.append("2. 🔧 Enable 'Install unknown apps'\n");
-        result.append("3. 🔧 Uninstall original Terraria first\n");
-        result.append("4. 🔧 Clear Package Installer cache\n");
-        result.append("5. 🔧 Restart device and retry\n");
-        result.append("6. 🔧 Copy APK to internal storage\n");
-        result.append("7. 🔧 Use different file manager\n");
-        result.append("8. 🔧 Check antivirus isn't blocking\n");
-        
-        return result.toString();
-    }
-    
-    private void diagnoseAndFixSettings() {
-        showProgress("Diagnosing settings persistence...");
-        
-        AsyncTask.execute(() -> {
-            try {
-                StringBuilder results = new StringBuilder();
-                results.append("=== Settings Persistence Diagnostic ===\n\n");
-                results.append("🔧 SHARED PREFERENCES TEST\n");
-                results.append(testSharedPreferences()).append("\n");
-                results.append("🔄 AUTO-REFRESH SPECIFIC TEST\n");
-                results.append(testAutoRefreshSetting()).append("\n");
-                results.append("💾 FILE SYSTEM TEST\n");
-                results.append(testFileSystemWrites()).append("\n");
-                
-                runOnUiThread(() -> {
-                    hideProgress();
-                    displayResults(results.toString());
-                    showSettingsFixOptions();
-                });
-            } catch (Exception e) {
-                runOnUiThread(() -> {
-                    hideProgress();
-                    showError("Settings diagnostic failed: " + e.getMessage());
-                });
-            }
-        });
-    }
-    
-    private String testSharedPreferences() {
-        StringBuilder result = new StringBuilder();
-        
-        try {
-            android.content.SharedPreferences prefs = getSharedPreferences("DiagnosticTest", MODE_PRIVATE);
-            android.content.SharedPreferences.Editor editor = prefs.edit();
-            
-            editor.putBoolean("test_bool", true);
-            editor.putString("test_string", "test_value");
-            boolean commitSuccess = editor.commit();
-            
-            result.append("Write test: ").append(commitSuccess ? "✅ Success" : "❌ Failed").append("\n");
-            
-            if (commitSuccess) {
-                boolean boolVal = prefs.getBoolean("test_bool", false);
-                String stringVal = prefs.getString("test_string", null);
-                boolean readSuccess = boolVal && "test_value".equals(stringVal);
-                
-                result.append("Read test: ").append(readSuccess ? "✅ Success" : "❌ Failed").append("\n");
-                
-                if (!readSuccess) {
-                    result.append("   This explains your auto-refresh issue!\n");
-                }
-                
-                editor.clear().commit();
-            }
-            
-        } catch (Exception e) {
-            result.append("❌ SharedPreferences test failed: ").append(e.getMessage()).append("\n");
-        }
-        
-        return result.toString();
-    }
-    
-    private String testAutoRefreshSetting() {
-        StringBuilder result = new StringBuilder();
-        
-        try {
-            // Simulate the exact auto-refresh setting behavior
-            android.content.SharedPreferences logPrefs = getSharedPreferences("LogViewerPrefs", MODE_PRIVATE);
-            android.content.SharedPreferences.Editor editor = logPrefs.edit();
-            
-            // Test the specific setting that's failing
-            editor.putBoolean("auto_refresh_enabled", false);
-            boolean applyResult = editor.commit(); // Use commit instead of apply for immediate result
-            
-            result.append("Auto-refresh disable: ").append(applyResult ? "✅ Success" : "❌ Failed").append("\n");
-            
-            if (applyResult) {
-                // Check if it actually persisted
-                boolean currentValue = logPrefs.getBoolean("auto_refresh_enabled", true); // default true
-                result.append("Setting persisted: ").append(!currentValue ? "✅ Success" : "❌ Failed").append("\n");
-                
-                if (currentValue) {
-                    result.append("   Setting reverted to default - persistence failed!\n");
-                    result.append("   This is your exact issue.\n");
-                }
-            }
-            
-        } catch (Exception e) {
-            result.append("❌ Auto-refresh test failed: ").append(e.getMessage()).append("\n");
-        }
-        
-        return result.toString();
-    }
-    
-    private String testFileSystemWrites() {
-        StringBuilder result = new StringBuilder();
-        
-        try {
-            File testDir = new File(getFilesDir(), "diagnostic_test");
-            testDir.mkdirs();
-            
-            File testFile = new File(testDir, "settings_test.txt");
-            
-            try (FileWriter writer = new FileWriter(testFile)) {
-                writer.write("auto_refresh=false\n");
-                writer.write("timestamp=" + System.currentTimeMillis() + "\n");
-                result.append("✅ File write successful\n");
-            }
-            
-            if (testFile.exists()) {
-                try (java.io.BufferedReader reader = new java.io.BufferedReader(
-                        new java.io.FileReader(testFile))) {
-                    String line = reader.readLine();
-                    if (line != null && line.contains("auto_refresh=false")) {
-                        result.append("✅ File read successful\n");
-                    } else {
-                        result.append("❌ File content corrupted\n");
-                    }
-                }
-            }
-            
-            testFile.delete();
-            testDir.delete();
-            
-        } catch (Exception e) {
-            result.append("❌ File system test failed: ").append(e.getMessage()).append("\n");
-        }
-        
-        return result.toString();
-    }
-    
-    private String getFileNameFromUri(Uri uri) {
-        try {
-            android.database.Cursor cursor = getContentResolver().query(uri, null, null, null, null);
-            if (cursor != null) {
-                int nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME);
-                if (nameIndex >= 0 && cursor.moveToFirst()) {
-                    String name = cursor.getString(nameIndex);
-                    cursor.close();
-                    return name;
-                }
-                cursor.close();
-            }
-        } catch (Exception e) {
-            return uri.getLastPathSegment();
-        }
-        return null;
-    }
-    
-    private void performAutoRepair() {
-        new AlertDialog.Builder(this)
-            .setTitle("Auto-Repair System")
-            .setMessage("Attempt automatic fixes for:\n\n" +
-                       "• Missing directories\n" +
-                       "• Settings persistence\n" +
-                       "• File permissions\n" +
-                       "• Configuration corruption\n\n" +
-                       "Continue?")
-            .setPositiveButton("Yes, Repair", (dialog, which) -> executeAutoRepair())
-            .setNegativeButton("Cancel", null)
-            .show();
-    }
-    
-    private void executeAutoRepair() {
-        showProgress("Performing auto-repair...");
-        
-        AsyncTask.execute(() -> {
-            try {
-                StringBuilder results = new StringBuilder();
-                results.append("=== Auto-Repair Results ===\n\n");
-                
-                boolean directoryRepair = diagnosticManager.attemptSelfRepair();
-                boolean settingsRepair = repairSettings();
-                boolean permissionRepair = repairPermissions();
-                
-                results.append("Directory Structure: ").append(directoryRepair ? "✅ Fixed" : "❌ Failed").append("\n");
-                results.append("Settings Persistence: ").append(settingsRepair ? "✅ Fixed" : "❌ Failed").append("\n");
-                results.append("Permissions: ").append(permissionRepair ? "✅ Fixed" : "❌ Failed").append("\n\n");
-                
-                if (directoryRepair || settingsRepair || permissionRepair) {
-                    results.append("🔄 Restart recommended to apply changes.\n");
-                } else {
-                    results.append("❌ Could not auto-fix detected issues.\n");
-                    results.append("💡 Try manual solutions or check device settings.\n");
-                }
-                
-                runOnUiThread(() -> {
-                    hideProgress();
-                    displayResults(results.toString());
-                });
-            } catch (Exception e) {
-                runOnUiThread(() -> {
-                    hideProgress();
-                    showError("Auto-repair failed: " + e.getMessage());
-                });
-            }
-        });
-    }
-    
-    private boolean repairSettings() {
-        try {
-            // Clear all shared preferences and recreate
-            String[] prefFiles = {"TerrariaLoaderPrefs", "LogViewerPrefs", "AppSettings"};
-            
-            for (String prefFile : prefFiles) {
-                android.content.SharedPreferences prefs = getSharedPreferences(prefFile, MODE_PRIVATE);
-                android.content.SharedPreferences.Editor editor = prefs.edit();
-                editor.clear();
-                if (!editor.commit()) {
-                    return false;
-                }
-            }
-            
-            // Test write after clear
-            android.content.SharedPreferences testPrefs = getSharedPreferences("TerrariaLoaderPrefs", MODE_PRIVATE);
-            android.content.SharedPreferences.Editor testEditor = testPrefs.edit();
-            testEditor.putBoolean("settings_repaired", true);
-            return testEditor.commit();
-            
-        } catch (Exception e) {
-            LogUtils.logDebug("Settings repair failed: " + e.getMessage());
-            return false;
-        }
-    }
-    
-    private boolean repairPermissions() {
-        try {
-            File testDir = new File(getExternalFilesDir(null), "permission_test");
-            testDir.mkdirs();
-            
-            File testFile = new File(testDir, "test.txt");
-            FileWriter writer = new FileWriter(testFile);
-            writer.write("test");
-            writer.close();
-            
-            boolean canWrite = testFile.exists() && testFile.length() > 0;
-            testFile.delete();
-            testDir.delete();
-            
-            return canWrite;
-        } catch (Exception e) {
-            return false;
-        }
-    }
-    
-    private void exportDiagnosticReport() {
-        try {
-            String reportContent = diagnosticResultsText.getText().toString();
-            if (reportContent.isEmpty() || reportContent.startsWith("Click")) {
-                showToast("No diagnostic results to export");
-                return;
-            }
-            
-            File reportsDir = new File(getExternalFilesDir(null), "DiagnosticReports");
-            reportsDir.mkdirs();
-            
-            String timestamp = new java.text.SimpleDateFormat("yyyyMMdd_HHmmss", 
-                java.util.Locale.getDefault()).format(new java.util.Date());
-            File reportFile = new File(reportsDir, "diagnostic_" + timestamp + ".txt");
-            
-            try (FileWriter writer = new FileWriter(reportFile)) {
-                writer.write(reportContent);
-                writer.write("\n\n=== Export Info ===\n");
-                writer.write("Exported by: TerrariaLoader Diagnostic Tool\n");
-                writer.write("Export time: " + new java.util.Date().toString() + "\n");
-            }
-            
-            // Share the report
-            Uri fileUri = FileProvider.getUriForFile(this, 
-                getPackageName() + ".provider", reportFile);
-            
-            Intent shareIntent = new Intent(Intent.ACTION_SEND);
-            shareIntent.setType("text/plain");
-            shareIntent.putExtra(Intent.EXTRA_STREAM, fileUri);
-            shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            
-            startActivity(Intent.createChooser(shareIntent, "Share Diagnostic Report"));
-            showToast("Report exported: " + reportFile.getName());
-            
-        } catch (Exception e) {
-            showError("Export failed: " + e.getMessage());
-        }
-    }
-    
-    private void clearResults() {
-        diagnosticResultsText.setText("Click 'Run Full System Check' to start diagnostics...");
-    }
-    
-    private void showSettingsFixOptions() {
-        new AlertDialog.Builder(this)
-            .setTitle("Settings Fix Options")
-            .setMessage("Settings persistence issue detected. Try these fixes:")
-            .setPositiveButton("Clear All Settings", (dialog, which) -> clearAllSettings())
-            .setNeutralButton("Reset App Data", (dialog, which) -> showResetAppDataInfo())
-            .setNegativeButton("Cancel", null)
-            .show();
-    }
-    
-    private void clearAllSettings() {
-        try {
-            String[] prefFiles = {"TerrariaLoaderPrefs", "LogViewerPrefs", "AppSettings"};
-            for (String prefFile : prefFiles) {
-                getSharedPreferences(prefFile, MODE_PRIVATE).edit().clear().commit();
-            }
-            showToast("Settings cleared - restart app to test");
-        } catch (Exception e) {
-            showError("Failed to clear settings: " + e.getMessage());
-        }
-    }
-    
-    private void showResetAppDataInfo() {
-        new AlertDialog.Builder(this)
-            .setTitle("Reset App Data")
-            .setMessage("To completely reset TerrariaLoader:\n\n" +
-                       "1. Go to Android Settings\n" +
-                       "2. Apps > TerrariaLoader\n" +
-                       "3. Storage > Clear Data\n\n" +
-                       "This will fix persistent settings issues.")
-            .setPositiveButton("OK", null)
-            .show();
-    }
-    
-    private void displayResults(String results) {
-        diagnosticResultsText.setText(results);
-    }
-    
-    private void showProgress(String message) {
-        progressDialog = new ProgressDialog(this);
-        progressDialog.setMessage(message);
-        progressDialog.setCancelable(false);
-        progressDialog.show();
-    }
-    
-    private void hideProgress() {
-        if (progressDialog != null && progressDialog.isShowing()) {
-            progressDialog.dismiss();
-        }
-    }
-    
-    private void showToast(String message) {
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
-    }
-    
-    private void showError(String error) {
-        new AlertDialog.Builder(this)
-            .setTitle("Error")
-            .setMessage(error)
-            .setPositiveButton("OK", null)
-            .show();
-    }
-    
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        hideProgress();
-    }
-}
-
-
-
-
-===== ModLoader/app/src/main/java/com/modloader/ui/SettingsActivity.java =====
-
+--- FILE: /ModLoader/app/src/main/java/com/modloader/ui/SettingsActivity.java ---
 // File: SettingsActivity.java (Enhanced UI with Operation Modes)
 // Path: /app/src/main/java/com/terrarialoader/ui/SettingsActivity.java
 
@@ -1587,9 +602,7 @@ public class SettingsActivity extends AppCompatActivity {
 }
 
 
-
-===== ModLoader/app/src/main/java/com/modloader/ui/SetupGuideActivity.java =====
-
+--- FILE: /ModLoader/app/src/main/java/com/modloader/ui/SetupGuideActivity.java ---
 // File: SetupGuideActivity.java (Updated) - Added Offline ZIP Import
 // Path: /storage/emulated/0/AndroidIDEProjects/TerrariaML/app/src/main/java/com/terrarialoader/ui/SetupGuideActivity.java
 
@@ -1880,9 +893,7 @@ public class SetupGuideActivity extends AppCompatActivity {
 }
 
 
-
-===== ModLoader/app/src/main/java/com/modloader/ui/UnifiedLoaderActivity.java =====
-
+--- FILE: /ModLoader/app/src/main/java/com/modloader/ui/UnifiedLoaderActivity.java ---
 // File: UnifiedLoaderActivity.java - Complete Fixed Version
 // Path: /main/java/com/modloader/ui/UnifiedLoaderActivity.java
 
@@ -2492,9 +1503,7 @@ public class UnifiedLoaderActivity extends AppCompatActivity implements
 }
 
 
-
-===== ModLoader/app/src/main/java/com/modloader/ui/UnifiedLoaderController.java =====
-
+--- FILE: /ModLoader/app/src/main/java/com/modloader/ui/UnifiedLoaderController.java ---
 // File: UnifiedLoaderController.java - Fixed step progression for offline ZIP import
 // Path: /app/src/main/java/com/modloader/ui/UnifiedLoaderController.java
 
@@ -3198,9 +2207,7 @@ public class UnifiedLoaderController {
   
 
 
-
-===== ModLoader/app/src/main/java/com/modloader/ui/UnifiedLoaderListener.java =====
-
+--- FILE: /ModLoader/app/src/main/java/com/modloader/ui/UnifiedLoaderListener.java ---
 // File: UnifiedLoaderListener.java - Missing interface for UnifiedLoaderActivity
 // Path: /app/src/main/java/com/modloader/ui/UnifiedLoaderListener.java
 
@@ -3262,9 +2269,7 @@ public interface UnifiedLoaderListener {
 }
 
 
-
-===== ModLoader/app/src/main/java/com/modloader/util/ApkInstaller.java =====
-
+--- FILE: /ModLoader/app/src/main/java/com/modloader/util/ApkInstaller.java ---
 // File: ApkInstaller.java (FIXED) - Enhanced APK Installation with Proper Error Handling
 // Path: /main/java/com/terrarialoader/util/ApkInstaller.java
 
@@ -3776,9 +2781,7 @@ public class ApkInstaller {
 }
 
 
-
-===== ModLoader/app/src/main/java/com/modloader/util/ApkPatcher.java =====
-
+--- FILE: /ModLoader/app/src/main/java/com/modloader/util/ApkPatcher.java ---
 // File: ApkPatcher.java - Enhanced APK patching with real MelonLoader injection
 // Path: app/src/main/java/com/terrarialoader/util/ApkPatcher.java
 
@@ -4500,9 +3503,7 @@ public class ApkPatcher {
 }
 
 
-
-===== ModLoader/app/src/main/java/com/modloader/util/ApkValidator.java =====
-
+--- FILE: /ModLoader/app/src/main/java/com/modloader/util/ApkValidator.java ---
 package com.modloader.util;
 
 import java.util.ArrayList;
@@ -4693,9 +3694,7 @@ public class ApkValidator {
 }
 
 
-
-===== ModLoader/app/src/main/java/com/modloader/util/DiagnosticBundleExporter.java =====
-
+--- FILE: /ModLoader/app/src/main/java/com/modloader/util/DiagnosticBundleExporter.java ---
 // File: DiagnosticBundleExporter.java - Comprehensive Support Bundle Creator
 // Path: /main/java/com/terrarialoader/util/DiagnosticBundleExporter.java
 
@@ -5244,9 +4243,7 @@ public class DiagnosticBundleExporter {
 }
 
 
-
-===== ModLoader/app/src/main/java/com/modloader/util/Downloader.java =====
-
+--- FILE: /ModLoader/app/src/main/java/com/modloader/util/Downloader.java ---
 // File: Downloader.java (Fixed Utility Class)
 // Path: /storage/emulated/0/AndroidIDEProjects/TerrariaML/app/src/main/java/com/terrarialoader/util/Downloader.java
 
@@ -5435,9 +4432,7 @@ public class Downloader {
 }
 
 
-
-===== ModLoader/app/src/main/java/com/modloader/util/FileUtils.java =====
-
+--- FILE: /ModLoader/app/src/main/java/com/modloader/util/FileUtils.java ---
 // File: FileUtils.java - Complete with all missing methods
 // Path: /app/src/main/java/com/terrarialoader/util/FileUtils.java
 
@@ -5983,11 +4978,7 @@ public class FileUtils {
 }
 
 
-
-===== ModLoader/app/src/main/java/com/modloader/util/LogUtils.java =====
-
-// File: LogUtils.java (COMPLETELY REWRITTEN) - Advanced Logging with Log4j2
-// Path: /app/src/main/java/com/modloader/util/LogUtils.java
+--- FILE: /ModLoader/app/src/main/java/com/modloader/util/LogUtils.java ---
 package com.modloader.util;
 
 import android.content.Context;
@@ -6232,32 +5223,32 @@ public class LogUtils {
         for (LogEntry entry : batch) {
             try {
                 // Apply smart filtering
-                if (isNoiseMessage(entry.message)) {
+                if (isNoiseMessage(entry.getMessage())) {
                     continue;
                 }
                 
                 // Set correlation context
-                ThreadContext.put("correlationId", entry.correlationId);
-                ThreadContext.put("category", entry.category);
-                ThreadContext.put("timestamp", String.valueOf(entry.timestamp));
+                ThreadContext.put("correlationId", entry.getCorrelationId());
+                ThreadContext.put("category", entry.getCategory());
+                ThreadContext.put("timestamp", String.valueOf(entry.getTimestamp()));
                 
                 // Route to appropriate logger
-                Logger logger = getLoggerForCategory(entry.category);
-                switch (entry.level) {
-                    case ERROR:
-                        logger.error(entry.message, entry.throwable);
+                Logger logger = getLoggerForCategory(entry.getCategory());
+                switch (entry.getLevel().name()) {
+                    case "ERROR":
+                        logger.error(entry.getMessage(), entry.getThrowable());
                         break;
-                    case WARN:
-                        logger.warn(entry.message);
+                    case "WARN":
+                        logger.warn(entry.getMessage());
                         break;
-                    case INFO:
-                        logger.info(entry.message);
+                    case "INFO":
+                        logger.info(entry.getMessage());
                         break;
-                    case DEBUG:
-                        logger.debug(entry.message);
+                    case "DEBUG":
+                        logger.debug(entry.getMessage());
                         break;
                     default:
-                        logger.info(entry.message);
+                        logger.info(entry.getMessage());
                 }
                 
                 // Update analytics
@@ -6398,7 +5389,7 @@ public class LogUtils {
         
         String correlationId = logCorrelation.getCurrentOrGenerate("ERROR");
         LogEntry entry = new LogEntry("ERROR", Level.ERROR, fullMessage, correlationId);
-        entry.throwable = throwable;
+        entry.setThrowable(throwable);
         
         offerToQueue(entry);
         
@@ -6619,6 +5610,122 @@ public class LogUtils {
         }
     }
     
+    // MISSING METHODS THAT CAUSED COMPILATION ERRORS - ADDED HERE
+    
+    /**
+     * FIXED: Missing method - Log APK process start
+     */
+    public static void logApkProcessStart(String operation, String inputApkName) {
+        String message = String.format("🚀 Starting APK process: %s | Input: %s", operation, inputApkName);
+        logUser(message);
+        
+        // Track APK processing performance
+        Map<String, Object> metrics = new HashMap<>();
+        metrics.put("operation", operation);
+        metrics.put("inputApk", inputApkName);
+        logStructured("APK_PROCESS_START", metrics);
+    }
+    
+    /**
+     * FIXED: Missing method - Log APK process step
+     */
+    public static void logApkProcessStep(String stepName, String details) {
+        String message = String.format("⚡ APK Step: %s | %s", stepName, details);
+        logInfo(message);
+        
+        // Track step performance
+        Map<String, Object> metrics = new HashMap<>();
+        metrics.put("step", stepName);
+        metrics.put("details", details);
+        logStructured("APK_PROCESS_STEP", metrics);
+    }
+    
+    /**
+     * FIXED: Missing method - Log APK process completion
+     */
+    public static void logApkProcessComplete(boolean success, String result) {
+        String status = success ? "✅ SUCCESS" : "❌ FAILED";
+        String message = String.format("🏁 APK Process Complete: %s | %s", status, result);
+        
+        if (success) {
+            logUser(message);
+        } else {
+            logError(message);
+        }
+        
+        // Track completion metrics
+        Map<String, Object> metrics = new HashMap<>();
+        metrics.put("success", success);
+        metrics.put("result", result);
+        logStructured("APK_PROCESS_COMPLETE", metrics);
+    }
+    
+    /**
+     * FIXED: Missing method - Clear all logs
+     */
+    public static void clearLogs() {
+        if (!isInitialized) {
+            System.out.println("Cannot clear logs - LogUtils not initialized");
+            return;
+        }
+        
+        try {
+            // Clear the async log queue
+            logQueue.clear();
+            
+            // Clear logs via advanced log manager
+            if (advancedLogManager != null) {
+                advancedLogManager.clearAllLogs();
+            }
+            
+            // Reset counters
+            totalLogsGenerated.set(0);
+            filteredOutLogs.set(0);
+            
+            logUser("🗑️ All logs cleared successfully");
+            
+        } catch (Exception e) {
+            logError("Failed to clear logs: " + e.getMessage(), e);
+        }
+    }
+    
+    /**
+     * FIXED: Missing method - Get available log files
+     */
+    public static List<File> getAvailableLogFiles() {
+        if (!isInitialized || advancedLogManager == null) {
+            return new ArrayList<>();
+        }
+        
+        try {
+            return advancedLogManager.getAvailableLogFiles();
+        } catch (Exception e) {
+            logError("Failed to get available log files: " + e.getMessage(), e);
+            return new ArrayList<>();
+        }
+    }
+    
+    /**
+     * FIXED: Missing method - Read log file by index
+     */
+    public static String readLogFile(int index) {
+        if (!isInitialized || advancedLogManager == null) {
+            return "LogUtils not initialized";
+        }
+        
+        try {
+            List<File> logFiles = getAvailableLogFiles();
+            if (index >= 0 && index < logFiles.size()) {
+                return advancedLogManager.readLogFile(logFiles.get(index));
+            } else {
+                return "Invalid log file index: " + index;
+            }
+        } catch (Exception e) {
+            logError("Failed to read log file at index " + index + ": " + e.getMessage(), e);
+            return "Error reading log file: " + e.getMessage();
+        }
+    }
+    
     /**
      * Clean shutdown of logging system
      */
@@ -6657,13 +5764,18 @@ public class LogUtils {
     /**
      * Internal log entry class for async processing
      */
-    private static class LogEntry {
-        final String category;
-        final Level level;
-        final String message;
-        final String correlationId;
-        final long timestamp;
-        Throwable throwable;
+    public static class LogEntry {
+        // LogEntry class is now public to be accessible from LogAnalytics
+        // A SimpleDateFormat for consistent date/time formatting.
+        private static final SimpleDateFormat timestampFormat =
+            new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault());
+            
+        private final String category;
+        private final Level level;
+        private final String message;
+        private final String correlationId;
+        private final long timestamp;
+        private Throwable throwable;
         
         LogEntry(String category, Level level, String message, String correlationId) {
             this.category = category;
@@ -6672,13 +5784,50 @@ public class LogUtils {
             this.correlationId = correlationId;
             this.timestamp = System.currentTimeMillis();
         }
+        
+        // Getters to make fields accessible for LogAnalytics
+        public String getCategory() {
+            return category;
+        }
+
+        public Level getLevel() {
+            return level;
+        }
+
+        public String getMessage() {
+            return message;
+        }
+
+        public String getCorrelationId() {
+            return correlationId;
+        }
+        
+        public long getTimestamp() {
+            return timestamp;
+        }
+        
+        public String getTag() {
+            return category;
+        }
+
+        public String getFormattedTime() {
+            return timestampFormat.format(new Date(timestamp));
+        }
+
+        public Throwable getThrowable() {
+            return throwable;
+        }
+
+        public void setThrowable(Throwable throwable) {
+            this.throwable = throwable;
+        }
     }
 }
 
 
 
-===== ModLoader/app/src/main/java/com/modloader/util/MelonLoaderDiagnostic.java =====
 
+--- FILE: /ModLoader/app/src/main/java/com/modloader/util/MelonLoaderDiagnostic.java ---
 // File: MelonLoaderDiagnostic.java (Diagnostic Tool)
 // Path: /storage/emulated/0/AndroidIDEProjects/TerrariaML/app/src/main/java/com/terrarialoader/util/MelonLoaderDiagnostic.java
 
@@ -6874,9 +6023,7 @@ public class MelonLoaderDiagnostic {
 }
 
 
-
-===== ModLoader/app/src/main/java/com/modloader/util/OfflineZipImporter.java =====
-
+--- FILE: /ModLoader/app/src/main/java/com/modloader/util/OfflineZipImporter.java ---
 // File: OfflineZipImporter.java - Smart ZIP Import with Auto-Detection
 // Path: /main/java/com/terrarialoader/util/OfflineZipImporter.java
 
@@ -7225,9 +6372,7 @@ public class OfflineZipImporter {
 }
 
 
-
-===== ModLoader/app/src/main/java/com/modloader/util/OnlineInstaller.java =====
-
+--- FILE: /ModLoader/app/src/main/java/com/modloader/util/OnlineInstaller.java ---
 // File: OnlineInstaller.java (Utility Class) - Complete Automated Installation System
 // Path: /storage/emulated/0/AndroidIDEProjects/TerrariaML/app/src/main/java/com/terrarialoader/util/OnlineInstaller.java
 
@@ -7615,9 +6760,7 @@ public class OnlineInstaller {
 }
 
 
-
-===== ModLoader/app/src/main/java/com/modloader/util/PatchResult.java =====
-
+--- FILE: /ModLoader/app/src/main/java/com/modloader/util/PatchResult.java ---
 // File: PatchResult.java - Complete patch result class
 // Path: /storage/emulated/0/AndroidIDEProjects/ModLoader/app/src/main/java/com/modloader/util/PatchResult.java
 
@@ -7816,9 +6959,7 @@ public class PatchResult {
 }
 
 
-
-===== ModLoader/app/src/main/java/com/modloader/util/PathManager.java =====
-
+--- FILE: /ModLoader/app/src/main/java/com/modloader/util/PathManager.java ---
 // File: PathManager.java (FIXED Part 1) - Centralized Path Management
 // Path: /storage/emulated/0/AndroidIDEProjects/TerrariaML/main/java/com/terrarialoader/util/PathManager.java
 
@@ -8285,9 +7426,7 @@ public class PathManager {
 }
 
 
-
-===== ModLoader/app/src/main/java/com/modloader/util/PermissionManager.java =====
-
+--- FILE: /ModLoader/app/src/main/java/com/modloader/util/PermissionManager.java ---
 // File: PermissionManager.java (COMPLETE FIXED) - No Syntax Errors
 // Path: /app/src/main/java/com/modloader/util/PermissionManager.java
 
@@ -9083,12 +8222,753 @@ public class PermissionManager {
 }
 
 
-
-===== ModLoader/app/src/main/java/com/modloader/util/PrivilegeManager.java =====
-
+--- FILE: /ModLoader/app/src/main/java/com/modloader/util/PrivilegeManager.java ---
 package com.modloader.util;
 
 public class PrivilegeManager {
 }
 
+
+
+--- FILE: /ModLoader/app/src/main/java/com/modloader/util/RootManager.java ---
+// File: RootManager.java (FIXED) - Complete Root Access Management
+// Path: /app/src/main/java/com/modloader/util/RootManager.java
+
+package com.modloader.util;
+
+import android.content.Context;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
+import android.widget.Toast;
+import androidx.appcompat.app.AlertDialog;
+import android.app.Activity;
+
+import java.io.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
+
+public class RootManager {
+    private static final String TAG = "RootManager";
+    
+    // Common root binary locations
+    private static final String[] ROOT_BINARIES = {
+        "/system/bin/su",
+        "/system/xbin/su", 
+        "/sbin/su",
+        "/system/su",
+        "/vendor/bin/su"
+    };
+    
+    // Root management app packages
+    private static final String[] ROOT_APPS = {
+        "com.topjohnwu.magisk",           // Magisk
+        "eu.chainfire.supersu",           // SuperSU
+        "com.koushikdutta.superuser",     // Superuser
+        "com.noshufou.android.su",        // Superuser (older)
+        "com.thirdparty.superuser",       // SuperUser (CyanogenMod)
+        "me.phh.superuser"                // SuperUser (LineageOS)
+    };
+    
+    private final Context context;
+    private final Activity activity;
+    
+    // Root state tracking
+    private Boolean rootAvailable = null;
+    private Boolean rootGranted = null;
+    private String rootAppPackage = null;
+    private Process rootProcess = null;
+    private BufferedWriter rootWriter = null;
+    private BufferedReader rootReader = null;
+    
+    private RootCallback callback;
+    
+    public interface RootCallback {
+        void onRootAvailable(boolean available);
+        void onRootGranted(boolean granted);
+        void onRootCommandResult(String command, boolean success, String output);
+        void onRootError(String error);
+    }
+    
+    public RootManager(Context context) {
+        this.context = context;
+        this.activity = context instanceof Activity ? (Activity) context : null;
+        checkRootAvailability();
+    }
+    
+    public RootManager(Activity activity) {
+        this.context = activity;
+        this.activity = activity;
+        checkRootAvailability();
+    }
+    
+    public void setCallback(RootCallback callback) {
+        this.callback = callback;
+    }
+    
+    /**
+     * FIXED: Check if root access is available on this device
+     */
+    public boolean isRootAvailable() {
+        if (rootAvailable != null) {
+            return rootAvailable;
+        }
+        
+        LogUtils.logDebug("Checking root availability...");
+        
+        // Method 1: Check for su binary
+        boolean hasSuBinary = checkSuBinary();
+        
+        // Method 2: Check for root management apps
+        boolean hasRootApp = checkRootApps();
+        
+        // Method 3: Check build tags for test-keys
+        boolean hasTestKeys = checkBuildTags();
+        
+        // Method 4: Try to execute 'which su' command
+        boolean canExecuteSu = testSuExecution();
+        
+        rootAvailable = hasSuBinary || hasRootApp || hasTestKeys || canExecuteSu;
+        
+        LogUtils.logDebug("Root availability check:");
+        LogUtils.logDebug("- SU Binary: " + hasSuBinary);
+        LogUtils.logDebug("- Root App: " + hasRootApp);
+        LogUtils.logDebug("- Test Keys: " + hasTestKeys);
+        LogUtils.logDebug("- SU Execution: " + canExecuteSu);
+        LogUtils.logDebug("- Overall Available: " + rootAvailable);
+        
+        if (callback != null) {
+            callback.onRootAvailable(rootAvailable);
+        }
+        
+        return rootAvailable;
+    }
+    
+    /**
+     * Check for su binary in common locations
+     */
+    private boolean checkSuBinary() {
+        try {
+            for (String path : ROOT_BINARIES) {
+                File suFile = new File(path);
+                if (suFile.exists() && suFile.canExecute()) {
+                    LogUtils.logDebug("Found su binary at: " + path);
+                    return true;
+                }
+            }
+        } catch (Exception e) {
+            LogUtils.logDebug("Error checking su binaries: " + e.getMessage());
+        }
+        return false;
+    }
+    
+    /**
+     * Check for installed root management applications
+     */
+    private boolean checkRootApps() {
+        try {
+            PackageManager pm = context.getPackageManager();
+            for (String rootPackage : ROOT_APPS) {
+                try {
+                    ApplicationInfo appInfo = pm.getApplicationInfo(rootPackage, 0);
+                    if (appInfo != null) {
+                        LogUtils.logDebug("Found root app: " + rootPackage);
+                        rootAppPackage = rootPackage;
+                        return true;
+                    }
+                } catch (PackageManager.NameNotFoundException e) {
+                    // App not installed, continue checking
+                }
+            }
+        } catch (Exception e) {
+            LogUtils.logDebug("Error checking root apps: " + e.getMessage());
+        }
+        return false;
+    }
+    
+    /**
+     * Check build tags for test-keys (indicates custom ROM/rooted device)
+     */
+    private boolean checkBuildTags() {
+        try {
+            String buildTags = android.os.Build.TAGS;
+            return buildTags != null && buildTags.contains("test-keys");
+        } catch (Exception e) {
+            LogUtils.logDebug("Error checking build tags: " + e.getMessage());
+            return false;
+        }
+    }
+    
+    /**
+     * Test if su command can be executed
+     */
+    private boolean testSuExecution() {
+        try {
+            Process process = Runtime.getRuntime().exec("which su");
+            process.waitFor(2, TimeUnit.SECONDS);
+            int exitCode = process.exitValue();
+            return exitCode == 0;
+        } catch (Exception e) {
+            LogUtils.logDebug("Error testing su execution: " + e.getMessage());
+            return false;
+        }
+    }
+    
+    /**
+     * FIXED: Check if app has been granted root permission
+     */
+    public boolean hasRootPermission() {
+        if (rootGranted != null) {
+            return rootGranted;
+        }
+        
+        if (!isRootAvailable()) {
+            rootGranted = false;
+            return false;
+        }
+        
+        LogUtils.logDebug("Testing root permission...");
+        
+        // Try to execute a simple root command
+        String testResult = executeRootCommand("id", 3000);
+        rootGranted = testResult != null && testResult.contains("uid=0");
+        
+        LogUtils.logDebug("Root permission test result: " + rootGranted);
+        if (rootGranted) {
+            LogUtils.logUser("✅ Root permission granted");
+        } else {
+            LogUtils.logUser("❌ Root permission not granted");
+        }
+        
+        if (callback != null) {
+            callback.onRootGranted(rootGranted);
+        }
+        
+        return rootGranted;
+    }
+    
+    /**
+     * FIXED: Check if root is ready (available and granted)
+     */
+    public boolean isRootReady() {
+        boolean ready = isRootAvailable() && hasRootPermission();
+        LogUtils.logDebug("Root ready status: " + ready);
+        return ready;
+    }
+    
+    /**
+     * FIXED: Request root access from the user
+     */
+    public void requestRootAccess() {
+        if (!isRootAvailable()) {
+            LogUtils.logUser("❌ Root is not available on this device");
+            showToast("Root access is not available on this device");
+            return;
+        }
+        
+        if (hasRootPermission()) {
+            LogUtils.logUser("✅ Root permission already granted");
+            showToast("Root access already granted!");
+            return;
+        }
+        
+        LogUtils.logUser("🔐 Requesting root access...");
+        
+        // Try to get root access by executing a simple command
+        new Thread(() -> {
+            try {
+                String result = executeRootCommand("echo 'Root access granted'", 5000);
+                boolean success = result != null && result.contains("Root access granted");
+                
+                if (activity != null) {
+                    activity.runOnUiThread(() -> {
+                        if (success) {
+                            rootGranted = true;
+                            LogUtils.logUser("✅ Root access granted successfully!");
+                            showToast("Root access granted!");
+                            if (callback != null) {
+                                callback.onRootGranted(true);
+                            }
+                        } else {
+                            rootGranted = false;
+                            LogUtils.logUser("❌ Root access denied or failed");
+                            showRootRequestFailedDialog();
+                            if (callback != null) {
+                                callback.onRootGranted(false);
+                            }
+                        }
+                    });
+                }
+            } catch (Exception e) {
+                LogUtils.logDebug("Error requesting root access: " + e.getMessage());
+                if (activity != null) {
+                    activity.runOnUiThread(() -> {
+                        showToast("Error requesting root access");
+                        if (callback != null) {
+                            callback.onRootError(e.getMessage());
+                        }
+                    });
+                }
+            }
+        }).start();
+    }
+    
+    /**
+     * Show dialog when root request fails
+     */
+    private void showRootRequestFailedDialog() {
+        if (activity == null) return;
+        
+        new AlertDialog.Builder(activity)
+            .setTitle("❌ Root Access Failed")
+            .setMessage("Root access was denied or failed.\n\n" +
+                "Possible reasons:\n" +
+                "• Root permission was denied in the popup\n" +
+                "• Root management app is not properly configured\n" +
+                "• Device is not properly rooted\n\n" +
+                "Solutions:\n" +
+                "• Try again and grant permission\n" +
+                "• Check your root management app settings\n" +
+                "• Restart the device and try again")
+            .setPositiveButton("Try Again", (dialog, which) -> requestRootAccess())
+            .setNegativeButton("OK", null)
+            .show();
+    }
+    
+    /**
+     * FIXED: Execute shell command with root privileges
+     */
+    public String executeRootCommand(String command) {
+        return executeRootCommand(command, 10000); // Default 10 second timeout
+    }
+    
+    /**
+     * Execute shell command with root privileges and timeout
+     */
+    public String executeRootCommand(String command, long timeoutMs) {
+        if (!isRootAvailable()) {
+            LogUtils.logDebug("Cannot execute root command - root not available");
+            return null;
+        }
+        
+        LogUtils.logDebug("Executing root command: " + command);
+        
+        Process process = null;
+        BufferedReader reader = null;
+        BufferedWriter writer = null;
+        
+        try {
+            // Start su process
+            process = Runtime.getRuntime().exec("su");
+            
+            writer = new BufferedWriter(new OutputStreamWriter(process.getOutputStream()));
+            reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            
+            // Send command
+            writer.write(command + "\n");
+            writer.write("exit\n");
+            writer.flush();
+            
+            // Wait for completion with timeout
+            boolean finished = process.waitFor(timeoutMs, TimeUnit.MILLISECONDS);
+            if (!finished) {
+                LogUtils.logDebug("Root command timed out: " + command);
+                process.destroyForcibly();
+                return null;
+            }
+            
+            // Read output
+            StringBuilder output = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                output.append(line).append("\n");
+            }
+            
+            int exitCode = process.exitValue();
+            String result = output.toString().trim();
+            
+            LogUtils.logDebug("Root command result (exit=" + exitCode + "): " + 
+                (result.length() > 100 ? result.substring(0, 100) + "..." : result));
+            
+            if (callback != null) {
+                callback.onRootCommandResult(command, exitCode == 0, result);
+            }
+            
+            return exitCode == 0 ? result : null;
+            
+        } catch (Exception e) {
+            LogUtils.logDebug("Error executing root command: " + e.getMessage());
+            if (callback != null) {
+                callback.onRootError("Command execution failed: " + e.getMessage());
+            }
+            return null;
+        } finally {
+            // Clean up resources
+            try {
+                if (writer != null) writer.close();
+                if (reader != null) reader.close();
+                if (process != null && process.isAlive()) {
+                    process.destroyForcibly();
+                }
+            } catch (Exception e) {
+                LogUtils.logDebug("Error cleaning up root command resources: " + e.getMessage());
+            }
+        }
+    }
+    
+    /**
+     * Execute multiple root commands in a single su session
+     */
+    public List<String> executeRootCommands(String[] commands) {
+        return executeRootCommands(commands, 15000); // Default 15 second timeout for multiple commands
+    }
+    
+    /**
+     * Execute multiple root commands with timeout
+     */
+    public List<String> executeRootCommands(String[] commands, long timeoutMs) {
+        List<String> results = new ArrayList<>();
+        
+        if (!isRootAvailable() || commands == null || commands.length == 0) {
+            return results;
+        }
+        
+        LogUtils.logDebug("Executing " + commands.length + " root commands");
+        
+        Process process = null;
+        BufferedReader reader = null;
+        BufferedWriter writer = null;
+        
+        try {
+            process = Runtime.getRuntime().exec("su");
+            writer = new BufferedWriter(new OutputStreamWriter(process.getOutputStream()));
+            reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            
+            // Send all commands
+            for (String command : commands) {
+                writer.write(command + "\n");
+                writer.write("echo '---COMMAND_SEPARATOR---'\n");
+            }
+            writer.write("exit\n");
+            writer.flush();
+            
+            // Wait for completion
+            boolean finished = process.waitFor(timeoutMs, TimeUnit.MILLISECONDS);
+            if (!finished) {
+                LogUtils.logDebug("Root commands timed out");
+                process.destroyForcibly();
+                return results;
+            }
+            
+            // Read output and split by separator
+            StringBuilder currentOutput = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if ("---COMMAND_SEPARATOR---".equals(line)) {
+                    results.add(currentOutput.toString().trim());
+                    currentOutput.setLength(0);
+                } else {
+                    currentOutput.append(line).append("\n");
+                }
+            }
+            
+            // Add final output if any
+            if (currentOutput.length() > 0) {
+                results.add(currentOutput.toString().trim());
+            }
+            
+            LogUtils.logDebug("Root commands completed: " + results.size() + " results");
+            
+        } catch (Exception e) {
+            LogUtils.logDebug("Error executing root commands: " + e.getMessage());
+            if (callback != null) {
+                callback.onRootError("Batch command execution failed: " + e.getMessage());
+            }
+        } finally {
+            try {
+                if (writer != null) writer.close();
+                if (reader != null) reader.close();
+                if (process != null && process.isAlive()) {
+                    process.destroyForcibly();
+                }
+            } catch (Exception e) {
+                LogUtils.logDebug("Error cleaning up batch command resources: " + e.getMessage());
+            }
+        }
+        
+        return results;
+    }
+    
+    /**
+     * Start persistent root shell session
+     */
+    public boolean startRootSession() {
+        if (!isRootAvailable()) {
+            LogUtils.logDebug("Cannot start root session - root not available");
+            return false;
+        }
+        
+        if (rootProcess != null && rootProcess.isAlive()) {
+            LogUtils.logDebug("Root session already active");
+            return true;
+        }
+        
+        try {
+            LogUtils.logDebug("Starting persistent root session...");
+            rootProcess = Runtime.getRuntime().exec("su");
+            rootWriter = new BufferedWriter(new OutputStreamWriter(rootProcess.getOutputStream()));
+            rootReader = new BufferedReader(new InputStreamReader(rootProcess.getInputStream()));
+            
+            LogUtils.logDebug("✅ Root session started successfully");
+            return true;
+            
+        } catch (Exception e) {
+            LogUtils.logDebug("Error starting root session: " + e.getMessage());
+            closeRootSession();
+            return false;
+        }
+    }
+    
+    /**
+     * Execute command in persistent root session
+     */
+    public String executeInRootSession(String command) {
+        if (rootProcess == null || !rootProcess.isAlive() || rootWriter == null || rootReader == null) {
+            LogUtils.logDebug("Root session not active, starting new session");
+            if (!startRootSession()) {
+                return null;
+            }
+        }
+        
+        try {
+            LogUtils.logDebug("Executing in root session: " + command);
+            
+            rootWriter.write(command + "\n");
+            rootWriter.write("echo '---END_OF_COMMAND---'\n");
+            rootWriter.flush();
+            
+            StringBuilder output = new StringBuilder();
+            String line;
+            while ((line = rootReader.readLine()) != null) {
+                if ("---END_OF_COMMAND---".equals(line)) {
+                    break;
+                }
+                output.append(line).append("\n");
+            }
+            
+            String result = output.toString().trim();
+            LogUtils.logDebug("Root session command result: " + 
+                (result.length() > 100 ? result.substring(0, 100) + "..." : result));
+            
+            return result;
+            
+        } catch (Exception e) {
+            LogUtils.logDebug("Error executing in root session: " + e.getMessage());
+            closeRootSession();
+            return null;
+        }
+    }
+    
+    /**
+     * Close persistent root session
+     */
+    public void closeRootSession() {
+        try {
+            if (rootWriter != null) {
+                rootWriter.write("exit\n");
+                rootWriter.flush();
+                rootWriter.close();
+                rootWriter = null;
+            }
+            if (rootReader != null) {
+                rootReader.close();
+                rootReader = null;
+            }
+            if (rootProcess != null) {
+                if (rootProcess.isAlive()) {
+                    rootProcess.waitFor(2, TimeUnit.SECONDS);
+                    if (rootProcess.isAlive()) {
+                        rootProcess.destroyForcibly();
+                    }
+                }
+                rootProcess = null;
+            }
+            LogUtils.logDebug("Root session closed");
+        } catch (Exception e) {
+            LogUtils.logDebug("Error closing root session: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Check root status and display information
+     */
+    public void checkRootStatus() {
+        LogUtils.logUser("🔍 Checking root status...");
+        
+        boolean available = isRootAvailable();
+        boolean granted = hasRootPermission();
+        
+        StringBuilder status = new StringBuilder();
+        status.append("=== Root Status ===\n");
+        status.append("Available: ").append(available ? "✅" : "❌").append("\n");
+        status.append("Permission Granted: ").append(granted ? "✅" : "❌").append("\n");
+        
+        if (available) {
+            if (rootAppPackage != null) {
+                status.append("Root Manager: ").append(rootAppPackage).append("\n");
+            }
+            
+            // Try to get root info
+            String whoami = executeRootCommand("whoami");
+            if (whoami != null) {
+                status.append("Root User: ").append(whoami).append("\n");
+            }
+            
+            String suVersion = executeRootCommand("su --version");
+            if (suVersion != null) {
+                status.append("SU Version: ").append(suVersion).append("\n");
+            }
+        }
+        
+        LogUtils.logUser(status.toString());
+        
+        if (activity != null) {
+            new AlertDialog.Builder(activity)
+                .setTitle("Root Status")
+                .setMessage(status.toString())
+                .setPositiveButton("OK", null)
+                .show();
+        }
+    }
+    
+    /**
+     * Install/copy file using root privileges
+     */
+    public boolean installFileAsRoot(String sourcePath, String targetPath) {
+        if (!isRootReady()) {
+            LogUtils.logDebug("Cannot install file as root - root not ready");
+            return false;
+        }
+        
+        LogUtils.logDebug("Installing file as root: " + sourcePath + " -> " + targetPath);
+        
+        String[] commands = {
+            "cp '" + sourcePath + "' '" + targetPath + "'",
+            "chmod 644 '" + targetPath + "'",
+            "chown system:system '" + targetPath + "'"
+        };
+        
+        List<String> results = executeRootCommands(commands);
+        boolean success = results.size() == commands.length;
+        
+        if (success) {
+            LogUtils.logUser("✅ File installed successfully with root: " + targetPath);
+        } else {
+            LogUtils.logUser("❌ Failed to install file with root: " + targetPath);
+        }
+        
+        return success;
+    }
+    
+    /**
+     * Create directory using root privileges
+     */
+    public boolean createDirectoryAsRoot(String dirPath) {
+        if (!isRootReady()) {
+            return false;
+        }
+        
+        String result = executeRootCommand("mkdir -p '" + dirPath + "' && echo 'SUCCESS'");
+        boolean success = result != null && result.contains("SUCCESS");
+        
+        if (success) {
+            LogUtils.logDebug("Created directory as root: " + dirPath);
+        }
+        
+        return success;
+    }
+    
+    /**
+     * Delete file/directory using root privileges  
+     */
+    public boolean deleteAsRoot(String path) {
+        if (!isRootReady()) {
+            return false;
+        }
+        
+        String result = executeRootCommand("rm -rf '" + path + "' && echo 'DELETED'");
+        boolean success = result != null && result.contains("DELETED");
+        
+        if (success) {
+            LogUtils.logDebug("Deleted as root: " + path);
+        }
+        
+        return success;
+    }
+    
+    /**
+     * Get detailed root information
+     */
+    public String getDetailedStatus() {
+        StringBuilder info = new StringBuilder();
+        info.append("=== Root Manager Status ===\n");
+        
+        boolean available = isRootAvailable();
+        boolean granted = hasRootPermission();
+        
+        info.append("Available: ").append(available ? "✅" : "❌").append("\n");
+        info.append("Permission: ").append(granted ? "✅" : "❌").append("\n");
+        info.append("Ready: ").append(isRootReady() ? "✅" : "❌").append("\n");
+        
+        if (rootAppPackage != null) {
+            info.append("Root App: ").append(rootAppPackage).append("\n");
+        }
+        
+        info.append("Session Active: ").append(
+            (rootProcess != null && rootProcess.isAlive()) ? "✅" : "❌").append("\n");
+        
+        // Add system info if root is available
+        if (available) {
+            String buildTags = android.os.Build.TAGS;
+            info.append("Build Tags: ").append(buildTags != null ? buildTags : "Unknown").append("\n");
+        }
+        
+        return info.toString();
+    }
+    
+    /**
+     * Refresh root availability (call after potential changes)
+     */
+    public void refreshStatus() {
+        LogUtils.logDebug("Refreshing root status...");
+        rootAvailable = null;
+        rootGranted = null;
+        checkRootAvailability();
+    }
+    
+    /**
+     * Check root availability and update cache
+     */
+    private void checkRootAvailability() {
+        // This will update the rootAvailable cache
+        isRootAvailable();
+    }
+    
+    /**
+     * Show toast message
+     */
+    private void showToast(String message) {
+        if (context != null) {
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show();
+        }
+    }
+    
+    /**
+     * Clean up resources
+     */
+    public void cleanup() {
+        closeRootSession();
+        callback = null;
+    }
+}
 
